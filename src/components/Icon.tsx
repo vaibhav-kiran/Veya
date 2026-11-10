@@ -55,6 +55,7 @@ const iconMap = {
   micOff: { ios: "mic.slash", android: "mic_off" },
   share: { ios: "square.and.arrow.up", android: "share" },
   image: { ios: "photo", android: "image" },
+  flask: { ios: "flask", android: "science" },
 } as const satisfies Record<string, NonNullable<Extract<SymbolViewProps["name"], object>>>;
 
 export type IconName = keyof typeof iconMap;

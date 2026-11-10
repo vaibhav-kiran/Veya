@@ -9,12 +9,13 @@ import { Icon, type IconName } from "./Icon";
 
 const TAB_ICONS: Record<string, IconName> = {
   talk: "mic",
+  innovator: "flask",
   ideas: "idea",
   timeline: "calendar",
   settings: "settings",
 };
 
-/** Bottom navigation: Talk · Your Ideas · Calendar · Settings. */
+/** Bottom navigation: Talk · Innovator · Your Ideas · Calendar · Settings. */
 export function BottomTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, spacing[3]) }]} role="tablist">
@@ -43,7 +44,7 @@ export function BottomTabBar({ state, descriptors, emitter, navigateToTab, inset
             <View style={[styles.iconWrap, focused && styles.iconActive]}>
               <Icon name={TAB_ICONS[route.name] ?? "circle"} size={22} color={tint} weight={focused ? "medium" : "regular"} />
             </View>
-            <AppText variant="caption" style={[styles.label, { color: tint }]}>
+            <AppText variant="caption" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.label, { color: tint }]}>
               {label.toUpperCase()}
             </AppText>
           </Pressable>
@@ -65,5 +66,5 @@ const styles = StyleSheet.create({
   item: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: 52, gap: 3 },
   iconWrap: { width: 40, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 15 },
   iconActive: { boxShadow: themed("0px 0px 16px rgba(196, 181, 253, 0.45)"), backgroundColor: colors.overlay.lavenderSoft },
-  label: { letterSpacing: 0.6 },
+  label: { letterSpacing: 0.4, paddingHorizontal: 2 },
 });

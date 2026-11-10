@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { toBackendSections } from "@/constants/projectSections";
 import { isBackendConfigured, setApiUser } from "@/lib/veyaApi";
 import { useChatStore } from "@/stores/chatStore";
+import { useInnovatorStore } from "@/stores/innovatorStore";
 import { useConversationStore } from "@/stores/conversationStore";
 import { useProjectsStore } from "@/stores/projectsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -52,6 +53,7 @@ export function useBackendUser(userId: string | null | undefined): void {
     void useConversationStore.getState().resume();
     useChatStore.getState().claimForUser(current);
     void useChatStore.getState().resume();
+    useInnovatorStore.getState().claimForUser(current);
 
     void migrateLegacyProjects().then(() => useProjectsStore.getState().refresh());
   }, [userId]);

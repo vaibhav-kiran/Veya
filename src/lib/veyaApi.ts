@@ -9,6 +9,7 @@ export * as conversationApi from "@/lib/api/conversation";
 export * as chatApi from "@/lib/api/chat";
 export * as projectsApi from "@/lib/api/projects";
 export * as planApi from "@/lib/api/plan";
+export * as innovatorApi from "@/lib/api/innovator";
 
 export function describeApiError(error: unknown): string {
   if (error instanceof BackendNotConfiguredError) {

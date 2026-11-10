@@ -42,6 +42,7 @@ from services.project_store import ProjectRepository
 from services.chat_manager import ChatPipeline, ChatService
 from webapp.chat_routes import router as chat_router
 from webapp.conversation_routes import router as conversation_router
+from webapp.innovator_routes import router as innovator_router
 from webapp.plan_routes import router as plan_router
 from webapp.project_routes import router as project_router
 
@@ -63,6 +64,9 @@ async def lifespan(app: FastAPI):
         asyncio.to_thread(conversation_pipeline.warm_up)
     )
     yield
+    innovator_http = getattr(app.state, "innovator_http", None)
+    if innovator_http is not None:
+        await innovator_http.aclose()
 
 
 app = FastAPI(title="HackMate AI", lifespan=lifespan)
@@ -159,6 +163,7 @@ app.include_router(conversation_router)
 app.include_router(chat_router)
 app.include_router(project_router)
 app.include_router(plan_router)
+app.include_router(innovator_router)
 
 GREETING = "Hey Vaibhav! What idea do you have in mind?"
 

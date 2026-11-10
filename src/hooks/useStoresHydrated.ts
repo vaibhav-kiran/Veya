@@ -3,11 +3,12 @@ import { useSyncExternalStore } from "react";
 import { hydrationFailed, onHydrationFailure } from "@/lib/storage";
 import { useChatStore } from "@/stores/chatStore";
 import { useConversationStore } from "@/stores/conversationStore";
+import { useInnovatorStore } from "@/stores/innovatorStore";
 import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
-const persistedStores = [usePreferencesStore, useWorkspaceStore, useConversationStore, useChatStore, useSessionStore] as const;
+const persistedStores = [usePreferencesStore, useWorkspaceStore, useConversationStore, useChatStore, useSessionStore, useInnovatorStore] as const;
 
 /** A store is settled once it has loaded, or failed to load and fallen back to defaults. */
 const allSettled = () =>

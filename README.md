@@ -35,6 +35,7 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
   - a workflow diagram
   - a concept image, on request
 - **A timeline that fits your deadline.** Say "this weekend" or "15 March" and Veya splits the days into phases that suit the project, like UI, backend, auth and demo prep. Deadlines show up on the calendar.
+- **Innovator: ideas you can back up.** Don't have an idea yet? Tell Veya what you're into, your skills, budget and time. It researches real problems, checks what already exists on GitHub and in papers, tests each gap, and suggests up to three ideas with the sources behind them. Weak ideas are never used to fill the list.
 - **Your ideas in one place.** Save ideas, turn them into projects, track tasks and milestones, and look back at past chats.
 - **Make it yours.** Three themes (Violet, Graphite, Emerald), a profile photo or one of ten mascots.
 
@@ -51,6 +52,7 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
         ├── Perception + Reasoning layers            (local Qwen model via Ollama)
         ├── README + Mermaid diagram generation
         ├── Stable Diffusion                         (concept images, only on request)
+        ├── Innovator proxy ──► Idea engine (veya-idea-engine/, :8100)
         └── SQLite                                   (saved projects)
 ```
 
@@ -79,6 +81,7 @@ veya/
 │   └── theme/        colours, typography, themes
 ├── assets/           fonts, logo, mascots
 ├── docs/             demo video
+├── veya-idea-engine/ research-driven idea discovery service (Innovator)
 └── gnani/            FastAPI backend
     ├── services/     conversation, chat, language, perception, reasoning, speech, visuals, projects
     ├── tools/        tools the reasoning layer can call
@@ -130,7 +133,18 @@ uv sync
 uv run uvicorn webapp.app:app --host 0.0.0.0 --port 8000
 ```
 
-### 3. Run the app
+### 3. Run the idea engine (for the Innovator tab)
+
+```bash
+cd veya-idea-engine
+cp .env.example .env
+uv sync
+uv run uvicorn app.main:app --port 8100
+```
+
+The backend finds it at `http://localhost:8100` (change with `IDEA_ENGINE_URL`). Web search needs a `TAVILY_API_KEY`; GitHub and paper search work without keys but are rate limited. See [veya-idea-engine/README.md](veya-idea-engine/README.md).
+
+### 4. Run the app
 
 ```bash
 npm install
