@@ -8,11 +8,11 @@
 
 Talk through a rough idea, and Veya turns it into a project plan you can actually build: a step-by-step blueprint, a README, a workflow diagram and a timeline that fits your deadline.
 
-<a href="docs/veya-demo.mp4">
+<a href="https://drive.google.com/file/d/1nNryG1SvNe19qxy6zwutwOx92dzWi12L/view">
   <img src="docs/demo-cover.jpg" alt="Watch the 2-minute Veya demo" width="720" />
 </a>
 
-<sub>▶ Click the image to watch the 2-minute demo.</sub>
+<sub>▶ Click the image to watch the 2-minute demo · <a href="https://drive.google.com/file/d/1nNryG1SvNe19qxy6zwutwOx92dzWi12L/view">Open on Google Drive</a></sub>
 
 </div>
 
