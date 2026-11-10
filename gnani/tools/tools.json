@@ -1,0 +1,138 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_datasets",
+      "description": "Search Hugging Face for datasets relevant to the user's project or problem statement.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keywords describing the dataset required."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of datasets to return.",
+            "default": 5
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_models",
+      "description": "Search Hugging Face for pretrained models suitable for the user's project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Task, domain, or keywords describing the model."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of models to return.",
+            "default": 5
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "estimate_project_timeline",
+      "description": "Estimate a practical development timeline based on project complexity and available development time.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_name": {
+            "type": "string"
+          },
+          "complexity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "available_hours_per_day": {
+            "type": "number",
+            "description": "Number of hours available for development each day."
+          },
+          "deadline_days": {
+            "type": "integer",
+            "description": "Number of days available before the deadline."
+          }
+        },
+        "required": ["project_name", "complexity", "available_hours_per_day", "deadline_days"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "compare_technologies",
+      "description": "Compare technologies or frameworks based on their strengths, limitations, and suitability for a project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "technologies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Technologies to compare."
+          },
+          "project_requirements": {
+            "type": "string",
+            "description": "Requirements and constraints of the project."
+          }
+        },
+        "required": ["technologies", "project_requirements"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_project_state",
+      "description": "Save confirmed project information and decisions to persistent local storage.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_name": {
+            "type": "string"
+          },
+          "updates": {
+            "type": "object",
+            "description": "Key-value pairs containing confirmed project information."
+          }
+        },
+        "required": ["project_name", "updates"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_readme",
+      "description": "Generate and save a README Markdown file containing the current project specification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_name": {
+            "type": "string"
+          },
+          "project_details": {
+            "type": "object",
+            "description": "Project information to include in the README."
+          }
+        },
+        "required": ["project_name", "project_details"]
+      }
+    }
+  }
+]

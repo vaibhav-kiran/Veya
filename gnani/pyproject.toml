@@ -1,0 +1,41 @@
+[project]
+name = "gnani"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Vaibhav Kiran", email = "vaibhavkiran.work@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.15.0",
+    "diffusers>=0.42.1",
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "openai>=3.42.0",
+    "pillow>=13.0.0",
+    "pydantic>=2.14.2",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
+    "safetensors>=0.8.0",
+    "torch>=2.15.0",
+    "torchvision>=0.29.2",
+    "transformers>=5.22.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+gnani = "gnani:main"
+
+[build-system]
+requires = ["uv_build>=0.12.2,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

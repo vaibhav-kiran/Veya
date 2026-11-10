@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Generated at runtime
+project_state.db
+data/
+generated_images/
+generated_diagrams/
+readme/
+*.wav
