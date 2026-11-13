@@ -22,8 +22,9 @@ objects that are passed in. It does not talk to any API directly.
 import asyncio
 import logging
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 import httpx
 
@@ -157,6 +158,8 @@ class ConversationService:
         # so a second conversation doesn't sound like a replay. Same topics, same order.
         state.fixed_questions = fixed_questions_for(returning_user)
         opening_text, audio_error = await self._say_fixed_line(state, state.fixed_questions[0], message_type="greeting")
+        # owner, plan and question wording were set directly on the state.
+        self.store.save(state)
 
         return self._turn_response(
             state,
@@ -614,17 +617,25 @@ class ConversationService:
                 "Delete one or upgrade to create more."
             )
 
-    def _exclusive_access(self, session_id: str) -> asyncio.Lock:
+    @asynccontextmanager
+    async def _exclusive_access(self, session_id: str) -> AsyncIterator[None]:
         """
         Only one request may change a conversation at a time.
         A second request (double click, two tabs) is rejected right away
         instead of waiting, so nothing runs twice.
+
+        Whatever the request changed is saved when it ends (also after an
+        error), including fields the service sets directly on the state.
         """
 
         lock = self.store.get_lock(session_id)
         if lock.locked():
             raise ConversationBusyError()
-        return lock
+        async with lock:
+            try:
+                yield
+            finally:
+                self.store.save_by_id(session_id)
 
     @staticmethod
     def _validate_audio(audio_bytes: bytes, content_type: Optional[str]) -> None:

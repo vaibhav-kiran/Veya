@@ -37,6 +37,7 @@ from services.conversation_manager import (
     ConversationStore,
     ProjectGenerator
 )
+from services.conversation_manager.session_repository import SessionRepository
 from services.plans import PlanResolver
 from services.project_store import ProjectRepository
 from services.chat_manager import ChatPipeline, ChatService
@@ -119,13 +120,14 @@ conversation_pipeline = ConversationPipeline(
     model_name=language.model
 )
 
-# Saved projects (SQLite). Survives server restarts, unlike conversations.
-app.state.project_repository = ProjectRepository(
-    os.getenv("VEYA_DB_PATH", str(PROJECT_ROOT / "data" / "veya_projects.db"))
-)
+# Saved projects (SQLite). Survives server restarts.
+DATABASE_PATH = os.getenv("VEYA_DB_PATH", str(PROJECT_ROOT / "data" / "veya_projects.db"))
+app.state.project_repository = ProjectRepository(DATABASE_PATH)
 
+# Conversations and chats are also written to the same SQLite file, so a
+# restart (or a crash) doesn't lose what the user already said.
 app.state.conversation_service = ConversationService(
-    store=ConversationStore(),
+    store=ConversationStore(repository=SessionRepository(DATABASE_PATH, kind="voice")),
     stt_pipeline=stt,
     tts_pipeline=tts,
     language_pipeline=language,
@@ -143,7 +145,7 @@ app.state.conversation_service = ConversationService(
 # TEXT CHAT: model-driven questions (no fixed script), its own sessions,
 # same project generation and storage as voice.
 app.state.chat_service = ChatService(
-    store=ConversationStore(),
+    store=ConversationStore(repository=SessionRepository(DATABASE_PATH, kind="chat")),
     language_pipeline=language,
     chat_pipeline=ChatPipeline(
         llm_client=language.client,

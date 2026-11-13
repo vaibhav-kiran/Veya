@@ -96,8 +96,9 @@ services/
     ├── schemas.py                All Pydantic models: status, project details,
     │                             messages, Qwen decision, API requests/responses
     ├── errors.py                 Errors with messages that are safe to show users
-    ├── conversation_state.py     In-memory session store, status transitions,
+    ├── conversation_state.py     Session store (memory + SQLite), status transitions,
     │                             merging answers, corrections and skipped fields
+    ├── session_repository.py     Saves sessions to SQLite so they survive a restart
     ├── conversation_prompts.py   The three fixed questions, the "got it" line, the
     │                             one-time extraction prompt, and the prompt for
     │                             answers after the summary
@@ -334,7 +335,8 @@ any active status → cancelled          generating_project → error → (retry
   (prevents double-clicked Confirm generating twice).
 - Session IDs are 43-character random tokens (`secrets.token_urlsafe(32)`).
   They are not proof of identity; there is no login system.
-- Sessions live **in memory** and expire after 2 hours without activity.
+- Sessions are kept in memory and saved to SQLite (the same file as saved
+  projects, `VEYA_DB_PATH`). They expire after 2 hours without activity.
 
 ---
 
@@ -418,14 +420,12 @@ Clerk session tokens (JWT) on the server instead.
 
 ## Known limitations
 
-- **Saved projects, not saved conversations.** Generated projects are stored
-  in SQLite and survive restarts. Conversations in progress are still
-  in-memory (see below); the app detects an expired session and asks the user
-  to start again.
-
-- **In-memory sessions.** Restarting the server loses all conversations, and
-  they are not shared between several server processes. `ConversationStore`
-  has a small interface so it can be replaced by a database-backed store.
+- **One server process.** Conversations survive a restart (they are saved to
+  SQLite and loaded back on first use), but each process keeps its own
+  in-memory copy, so don't run several workers. The latest reply's audio is
+  not saved: after a restart that one reply is shown as text. A project that
+  was being generated when the server stopped is marked as failed, and the
+  user confirms again to retry.
 - **Fixed questions.** VEYA always asks the same three questions, even if
   your first answer already mentioned the timeline or technologies, and it
   does not ask follow-ups for vague answers. The summary is where you catch

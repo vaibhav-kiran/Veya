@@ -168,7 +168,6 @@ npx expo lint
 
 - Verify sign-in on the server so each user's projects are properly private.
 - Let people interrupt Veya by talking, instead of waiting for the reply to finish.
-- Save conversations in progress, so a server restart doesn't end them.
 
 ## License
 

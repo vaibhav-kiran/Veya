@@ -1,21 +1,21 @@
 """
 Session state management for VEYA conversations.
 
-This is a simple in-memory store. Every conversation has its own
-ConversationState object, identified by an unpredictable session ID.
+Every conversation has its own ConversationState object, identified by
+an unpredictable session ID. Sessions are kept in memory and, when a
+SessionRepository is given, every change is also written to SQLite, so a
+conversation survives a server restart: it is loaded back the first time
+the app asks for it.
 
-The store is intentionally small so it can later be replaced by a
-database-backed version with the same methods.
-
-Note: in-memory state is lost when the server restarts and is not
-shared between multiple server processes.
+Note: one server process. Several processes would each keep their own
+in-memory copy.
 """
 
 import asyncio
 import logging
 import secrets
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from services.conversation_manager.errors import (
     ConversationNotFoundError,
@@ -33,7 +33,14 @@ from services.conversation_manager.schemas import (
     utc_now,
 )
 
+if TYPE_CHECKING:
+    from services.conversation_manager.session_repository import SessionRepository
+
 logger = logging.getLogger(__name__)
+
+RESTARTED_DURING_GENERATION = (
+    "The server restarted while your project was being built. Your answers are saved: confirm again to retry."
+)
 
 
 # Which status changes are allowed. Anything else is a bug or a
@@ -90,8 +97,14 @@ ANSWERABLE_STATUSES = {
 class ConversationStore:
     """Keeps every conversation separate, keyed by session ID."""
 
-    def __init__(self, session_lifetime: timedelta = timedelta(hours=2)):
+    def __init__(
+        self,
+        session_lifetime: timedelta = timedelta(hours=2),
+        repository: Optional["SessionRepository"] = None,
+    ):
         self.session_lifetime = session_lifetime
+        # Optional SQLite copy of every session (survives restarts).
+        self.repository = repository
         self._conversations: dict[str, ConversationState] = {}
         # One lock per session prevents two requests from changing the
         # same conversation at the same time (for example a double click).
@@ -114,12 +127,13 @@ class ConversationStore:
 
         self._conversations[session_id] = conversation
         self._locks[session_id] = asyncio.Lock()
+        self.save(conversation)
 
         logger.info("Created conversation %s...", session_id[:8])
         return conversation
 
     def get_conversation(self, session_id: str) -> ConversationState:
-        conversation = self._conversations.get(session_id)
+        conversation = self._conversations.get(session_id) or self._load_saved(session_id)
 
         if conversation is None:
             raise ConversationNotFoundError()
@@ -133,6 +147,48 @@ class ConversationStore:
     def delete_conversation(self, session_id: str) -> None:
         self._conversations.pop(session_id, None)
         self._locks.pop(session_id, None)
+        if self.repository is not None:
+            self._safely(self.repository.delete, session_id)
+
+    def save(self, conversation: ConversationState) -> None:
+        """Write the session to SQLite (if configured). Never breaks the conversation."""
+        if self.repository is not None:
+            self._safely(self.repository.save, conversation)
+
+    def save_by_id(self, session_id: str) -> None:
+        """Save a session that is loaded in memory (no-op if it was deleted meanwhile)."""
+        conversation = self._conversations.get(session_id)
+        if conversation is not None:
+            self.save(conversation)
+
+    def _load_saved(self, session_id: str) -> Optional[ConversationState]:
+        """After a restart: bring a saved session back into memory."""
+
+        if self.repository is None:
+            return None
+        conversation = self._safely(self.repository.load, session_id)
+        if conversation is None:
+            return None
+
+        # A project generation that was running when the server stopped
+        # will never finish. Let the user confirm again to retry.
+        if conversation.status == ConversationStatus.GENERATING_PROJECT:
+            conversation.status = ConversationStatus.ERROR
+            conversation.last_error = RESTARTED_DURING_GENERATION
+
+        self._conversations[session_id] = conversation
+        self._locks[session_id] = asyncio.Lock()
+        logger.info("Restored conversation %s... from the database", session_id[:8])
+        return conversation
+
+    @staticmethod
+    def _safely(action, *args):
+        # A database problem must not end the conversation the user is in.
+        try:
+            return action(*args)
+        except Exception:
+            logger.exception("Conversation storage failed")
+            return None
 
     def get_lock(self, session_id: str) -> asyncio.Lock:
         # get_conversation raises if the session does not exist.
@@ -148,6 +204,8 @@ class ConversationStore:
         for session_id in expired_ids:
             logger.info("Removing expired conversation %s...", session_id[:8])
             self.delete_conversation(session_id)
+        if self.repository is not None:
+            self._safely(self.repository.delete_older_than, utc_now() - self.session_lifetime)
 
     def _is_expired(self, conversation: ConversationState) -> bool:
         return utc_now() - conversation.updated_at > self.session_lifetime
@@ -397,9 +455,9 @@ class ConversationStore:
         if field_name in conversation.skipped_fields:
             conversation.skipped_fields.remove(field_name)
 
-    @staticmethod
-    def _touch(conversation: ConversationState) -> None:
+    def _touch(self, conversation: ConversationState) -> None:
         conversation.updated_at = utc_now()
+        self.save(conversation)
 
 
 def details_for_display(details: ProjectDetails) -> dict[str, Any]:
