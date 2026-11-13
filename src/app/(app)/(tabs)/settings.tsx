@@ -21,13 +21,6 @@ import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useProjectsStore } from "@/stores/projectsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { colors, fontFamilies, radii, screenGutter, spacing, themed } from "@/theme";
-import type { LanguagePreferenceKey } from "@/types/preferences";
-
-const LANGUAGE_ROWS: { key: LanguagePreferenceKey; label: string; icon: IconName }[] = [
-  { key: "input", label: "Input language", icon: "mic" },
-  { key: "response", label: "Response language", icon: "chat" },
-  { key: "documentation", label: "Documentation language", icon: "document" },
-];
 
 const AVATAR_SIZE = 108;
 
@@ -50,7 +43,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
   const { user } = useUser();
-  const languages = usePreferencesStore((state) => state.languages);
+  const language = usePreferencesStore((state) => state.language);
   const ideaCount = useWorkspaceStore((state) => Object.keys(state.ideas).length);
   const projectCount = useProjectsStore((state) => state.summaries.length);
   const [planLabel, setPlanLabel] = useState("Free");
@@ -75,7 +68,7 @@ export default function SettingsScreen() {
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
   const avatar = avatarOf(user);
   const editProfile = () => router.push("/edit-profile");
-  const editLanguage = (section: LanguagePreferenceKey) => router.push({ pathname: "/language", params: { mode: "edit", section } });
+  const editLanguage = () => router.push({ pathname: "/language", params: { mode: "edit" } });
 
   const confirmSignOut = () =>
     Alert.alert("Sign out of Veya?", "Your ideas and tasks stay on this device for this account.", [
@@ -144,9 +137,7 @@ export default function SettingsScreen() {
           </View>
 
           <SettingsSection title="Language">
-            {LANGUAGE_ROWS.map(({ key, label, icon }) => (
-              <SettingsRow key={key} icon={icon} label={label} value={languageLabel(languages[key])} onPress={() => editLanguage(key)} />
-            ))}
+            <SettingsRow icon="language" label="Veya's language" value={languageLabel(language)} onPress={editLanguage} />
           </SettingsSection>
 
           <SettingsSection title="Account">

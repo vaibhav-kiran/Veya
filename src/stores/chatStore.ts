@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { BACKEND_RESPONSE_LANGUAGE, type ResponseLanguageCode } from "@/constants/languages";
+import { BACKEND_LANGUAGE, type LanguageCode } from "@/constants/languages";
 import { createId } from "@/lib/id";
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
 import { ApiError, chatApi, describeApiError, isAbortError, isConversationGone } from "@/lib/veyaApi";
@@ -47,8 +47,8 @@ type ChatState = {
   /** A past chat being read (read-only); null = the current chat. */
   viewingId: string | null;
 
-  send: (text: string, language: ResponseLanguageCode) => Promise<void>;
-  retry: (messageId: string, language: ResponseLanguageCode) => Promise<void>;
+  send: (text: string, language: LanguageCode) => Promise<void>;
+  retry: (messageId: string, language: LanguageCode) => Promise<void>;
   confirm: () => Promise<void>;
   cancel: () => Promise<void>;
   /** Move the current chat into history and start an empty one. */
@@ -108,11 +108,11 @@ let inFlight: AbortController | null = null;
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => {
-      const ensureSession = async (language: ResponseLanguageCode): Promise<boolean> => {
+      const ensureSession = async (language: LanguageCode): Promise<boolean> => {
         if (isActive(get())) return true;
         const myEpoch = ++epoch;
         try {
-          const turn = await chatApi.startChat(BACKEND_RESPONSE_LANGUAGE[language]);
+          const turn = await chatApi.startChat(BACKEND_LANGUAGE[language]);
           if (myEpoch !== epoch) return false;
           set((state) => ({
             sessionId: turn.session_id,

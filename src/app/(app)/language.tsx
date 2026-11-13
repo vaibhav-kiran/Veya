@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useRef, useState } from "react";
-import { ScrollView, StyleSheet, View, type ScrollViewInstance } from "react-native";
+import { useState } from "react";
+import { ScrollView, StyleSheet, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -11,19 +11,25 @@ import { LanguageHero } from "@/components/LanguageHero";
 import { LanguageOption } from "@/components/LanguageOption";
 import { ScreenBackground } from "@/components/ScreenBackground";
 import { VeyaLogo } from "@/components/VeyaLogo";
-import {
-  LANGUAGE_CAPTIONS,
-  LANGUAGE_GLYPHS,
-  LANGUAGE_SECTIONS,
-  languageLabel,
-  type LanguageOptionData,
-} from "@/constants/languages";
+import { LANGUAGE_GLYPHS, LANGUAGES, languageLabel, type LanguageCode } from "@/constants/languages";
 import { haptics } from "@/lib/haptics";
+import { useChatStore } from "@/stores/chatStore";
+import { useConversationStore } from "@/stores/conversationStore";
 import { usePreferencesStore } from "@/stores/preferencesStore";
 import { colors, fontFamilies, radii, screenGutter, spacing, themed } from "@/theme";
-import type { LanguagePreferenceKey, LanguagePreferences } from "@/types/preferences";
 
-const SECTION_KEYS: LanguagePreferenceKey[] = ["input", "response", "documentation"];
+/**
+ * A conversation keeps the language it started in, so after a change the
+ * open voice conversation and text chat start over in the new one (the chat
+ * goes to history). A project that is being built is left to finish.
+ */
+function startOverInNewLanguage() {
+  const conversation = useConversationStore.getState();
+  if (conversation.sessionId && conversation.phase !== "generatingProject") conversation.startNewConversation();
+
+  const chat = useChatStore.getState();
+  if (chat.sessionId && !chat.generating) chat.startNewChat();
+}
 
 function chunkPairs<T>(items: readonly T[]): T[][] {
   const rows: T[][] = [];
@@ -31,107 +37,31 @@ function chunkPairs<T>(items: readonly T[]): T[][] {
   return rows;
 }
 
-type SectionCardProps = {
-  sectionKey: LanguagePreferenceKey;
-  index: number;
-  selected: string;
-  onSelect: (code: string) => void;
-  onLayoutY: (y: number) => void;
-};
-
-/** One numbered glass card per preference, with the current choice shown in its header. */
-function SectionCard({ sectionKey, index, selected, onSelect, onLayoutY }: SectionCardProps) {
-  const section = LANGUAGE_SECTIONS[sectionKey];
-  const options: readonly LanguageOptionData<string>[] = section.options;
-
-  return (
-    <Animated.View
-      entering={FadeInDown.duration(420).delay(140 + index * 110)}
-      onLayout={(event) => onLayoutY(event.nativeEvent.layout.y)}
-      style={styles.card}
-      accessibilityRole="radiogroup"
-      accessibilityLabel={section.prompt}
-    >
-      <View style={styles.cardHeader}>
-        <View style={styles.badge}>
-          <AppText style={styles.badgeText}>{index + 1}</AppText>
-        </View>
-        <View style={styles.cardTitles}>
-          <AppText style={styles.cardTitle} accessibilityRole="header">
-            {section.title}
-          </AppText>
-          <AppText variant="bodySmall" tone="secondary">
-            {section.prompt}
-          </AppText>
-        </View>
-      </View>
-
-      <View style={styles.grid}>
-        {chunkPairs(options).map((row) => (
-          <View key={row[0].code} style={styles.row}>
-            {row.map((option) => (
-              <LanguageOption
-                key={option.code}
-                label={option.label}
-                detail={option.nativeLabel ?? LANGUAGE_CAPTIONS[option.code]}
-                glyph={LANGUAGE_GLYPHS[option.code] ?? option.label.charAt(0)}
-                selected={selected === option.code}
-                onPress={() => onSelect(option.code)}
-              />
-            ))}
-            {row.length === 1 ? <View style={styles.spacer} /> : null}
-          </View>
-        ))}
-      </View>
-    </Animated.View>
-  );
-}
-
 /**
- * Language preferences. Used once after first sign-in and again from
- * Settings (`mode=edit`, optionally scrolled to `section`).
+ * Choose the one language Veya works in: she listens for it, replies in it
+ * and speaks it. Used once after first sign-in and again from Settings
+ * (`mode=edit`).
  */
 export default function LanguageScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ mode?: string; section?: LanguagePreferenceKey }>();
+  const params = useLocalSearchParams<{ mode?: string }>();
   const isEditing = params.mode === "edit";
-  const savedLanguages = usePreferencesStore((state) => state.languages);
-  const setLanguages = usePreferencesStore((state) => state.setLanguages);
-
-  const [draft, setDraft] = useState<LanguagePreferences>(savedLanguages);
-  const scrollRef = useRef<ScrollViewInstance>(null);
-  const didScroll = useRef(false);
-  // Card positions are relative to the cards container, so track both.
-  const cardsY = useRef<number | null>(null);
-  const targetCardY = useRef<number | null>(null);
-
-  const choose = (key: LanguagePreferenceKey, code: string) =>
-    setDraft((current) => ({ ...current, [key]: code }) as LanguagePreferences);
+  const savedLanguage = usePreferencesStore((state) => state.language);
+  const setLanguage = usePreferencesStore((state) => state.setLanguage);
+  const [draft, setDraft] = useState<LanguageCode>(savedLanguage);
 
   const save = () => {
-    setLanguages(draft);
+    if (draft !== savedLanguage) startOverInNewLanguage();
+    setLanguage(draft);
     haptics.success();
     if (isEditing && router.canGoBack()) router.back();
     else router.replace("/talk");
   };
 
-  // Opened from a specific Settings row: bring that card into view once,
-  // as soon as both its own and its container's positions are known.
-  const tryScrollToSection = () => {
-    if (didScroll.current || cardsY.current === null || targetCardY.current === null) return;
-    didScroll.current = true;
-    scrollRef.current?.scrollTo({ y: cardsY.current + targetCardY.current - spacing[4], animated: true });
-  };
-  const onCardLayout = (key: LanguagePreferenceKey, y: number) => {
-    if (params.section !== key) return;
-    targetCardY.current = y;
-    tryScrollToSection();
-  };
-
   return (
     <ScreenBackground glow="top">
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-        <ScrollView ref={scrollRef} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
             {isEditing ? (
               <IconButton icon="chevronLeft" accessibilityLabel="Back to settings" onPress={() => router.back()} style={styles.back} />
@@ -148,43 +78,45 @@ export default function LanguageScreen() {
               </AppText>
             </AppText>
             <AppText variant="bodyMedium" tone="secondary" align="center" style={styles.subtitle}>
-              Talk to Veya the way you think. Choose each one separately — you can change them anytime.
+              Pick one language. Veya will listen, reply and speak in it. English words like app names are fine.
             </AppText>
           </Animated.View>
 
-          <View
-            style={styles.cards}
-            onLayout={(event) => {
-              cardsY.current = event.nativeEvent.layout.y;
-              tryScrollToSection();
-            }}
+          <Animated.View
+            entering={FadeInDown.duration(420).delay(140)}
+            style={styles.card}
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Which language should Veya use?"
           >
-            {SECTION_KEYS.map((key, index) => (
-              <SectionCard
-                key={key}
-                sectionKey={key}
-                index={index}
-                selected={draft[key]}
-                onSelect={(code) => choose(key, code)}
-                onLayoutY={(y) => onCardLayout(key, y)}
-              />
-            ))}
-          </View>
+            <View style={styles.grid}>
+              {chunkPairs(LANGUAGES).map((row) => (
+                <View key={row[0].code} style={styles.row}>
+                  {row.map((option) => (
+                    <LanguageOption
+                      key={option.code}
+                      label={option.label}
+                      detail={"nativeLabel" in option ? option.nativeLabel : undefined}
+                      glyph={LANGUAGE_GLYPHS[option.code]}
+                      selected={draft === option.code}
+                      onPress={() => setDraft(option.code)}
+                    />
+                  ))}
+                  {row.length === 1 ? <View style={styles.spacer} /> : null}
+                </View>
+              ))}
+            </View>
+          </Animated.View>
         </ScrollView>
 
         <View style={styles.footer}>
           <View pointerEvents="none" style={styles.fade} />
-          <View style={styles.summary} accessible accessibilityLabel="Your choices">
-            {SECTION_KEYS.map((key) => (
-              <View key={key} style={styles.summaryItem}>
-                <AppText style={styles.summaryLabel}>{LANGUAGE_SECTIONS[key].summary}</AppText>
-                <AppText style={styles.summaryValue} numberOfLines={1}>
-                  {languageLabel(draft[key])}
-                </AppText>
-              </View>
-            ))}
+          <View style={styles.summary} accessible accessibilityLabel={`Veya will use ${languageLabel(draft)}`}>
+            <AppText style={styles.summaryLabel}>Veya listens, replies and speaks in</AppText>
+            <AppText style={styles.summaryValue} numberOfLines={1}>
+              {languageLabel(draft)}
+            </AppText>
           </View>
-          <Button label={isEditing ? "Save preferences" : "Continue"} icon={isEditing ? "check" : "arrowRight"} onPress={save} />
+          <Button label={isEditing ? "Save language" : "Continue"} icon={isEditing ? "check" : "arrowRight"} onPress={save} />
         </View>
       </SafeAreaView>
     </ScreenBackground>
@@ -198,8 +130,8 @@ const styles = StyleSheet.create({
   back: { position: "absolute", left: 0 },
   title: { fontSize: 32, lineHeight: 38 },
   subtitle: { marginTop: spacing[3], maxWidth: 320, alignSelf: "center" },
-  cards: { marginTop: spacing[8], gap: spacing[5] },
   card: {
+    marginTop: spacing[8],
     padding: spacing[4],
     gap: spacing[4],
     borderRadius: radii.xl,
@@ -208,19 +140,6 @@ const styles = StyleSheet.create({
     backgroundColor: themed("rgba(18, 16, 30, 0.82)"),
     boxShadow: "0px 12px 30px rgba(0, 0, 0, 0.35)",
   },
-  cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing[3] },
-  badge: {
-    width: 32,
-    height: 32,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundImage: `linear-gradient(135deg, ${colors.veya.lavender} 0%, ${colors.veya.purple} 100%)`,
-    boxShadow: themed("0px 0px 14px rgba(167, 139, 250, 0.5)"),
-  },
-  badgeText: { fontFamily: fontFamilies.bold, fontSize: 15, lineHeight: 20, color: colors.text.primary },
-  cardTitles: { flex: 1, gap: 2 },
-  cardTitle: { fontFamily: fontFamilies.semibold, fontSize: 17, lineHeight: 22, color: colors.text.primary },
   grid: { gap: spacing[2] + 2 },
   row: { flexDirection: "row", gap: spacing[2] + 2 },
   spacer: { flex: 1 },
@@ -240,13 +159,14 @@ const styles = StyleSheet.create({
     backgroundImage: themed(`linear-gradient(180deg, rgba(8, 8, 12, 0) 0%, ${colors.veya.background} 100%)`),
   },
   summary: {
-    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing[2],
+    gap: 1,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: themed("rgba(196, 181, 253, 0.14)"),
     backgroundColor: "rgba(255, 255, 255, 0.03)",
   },
-  summaryItem: { flex: 1, alignItems: "center", paddingVertical: spacing[2], gap: 1 },
   summaryLabel: { fontFamily: fontFamilies.regular, fontSize: 11, lineHeight: 14, color: colors.text.muted },
   summaryValue: { fontFamily: fontFamilies.semibold, fontSize: 13.5, lineHeight: 18, color: colors.veya.lavender },
 });

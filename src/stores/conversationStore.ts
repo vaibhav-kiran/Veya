@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { BACKEND_RESPONSE_LANGUAGE, type ResponseLanguageCode } from "@/constants/languages";
+import { BACKEND_LANGUAGE, type LanguageCode } from "@/constants/languages";
 import type { RecordedAudio } from "@/lib/api/conversation";
 import { createId } from "@/lib/id";
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
@@ -54,7 +54,7 @@ type ConversationState = {
   /** This user has heard Veya's full spoken introduction; later conversations open with a short greeting. */
   introHeard: boolean;
 
-  startVoiceConversation: (language: ResponseLanguageCode) => Promise<void>;
+  startVoiceConversation: (language: LanguageCode) => Promise<void>;
   sendRecording: (audio: RecordedAudio) => Promise<void>;
   confirm: () => Promise<void>;
   cancel: () => Promise<void>;
@@ -186,12 +186,12 @@ export const useConversationStore = create<ConversationState>()(
         set({ phase, error: describeApiError(error) });
       };
 
-      const ensureSession = async (language: ResponseLanguageCode, speak: boolean): Promise<boolean> => {
+      const ensureSession = async (language: LanguageCode, speak: boolean): Promise<boolean> => {
         if (isSessionActive(get())) return true;
         const myEpoch = ++epoch;
         set({ phase: "starting", error: null, notice: null, projectId: null, speechId: null, afterSpeech: null });
         try {
-          const turn = await conversationApi.startConversation(BACKEND_RESPONSE_LANGUAGE[language], get().introHeard);
+          const turn = await conversationApi.startConversation(BACKEND_LANGUAGE[language], get().introHeard);
           if (myEpoch !== epoch) return false;
           set({ introHeard: true });
           applyTurn(turn, { speak });

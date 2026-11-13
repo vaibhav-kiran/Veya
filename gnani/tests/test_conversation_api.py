@@ -6,7 +6,8 @@ from services.conversation_manager.conversation_prompts import (
     TECHNOLOGY_QUESTION,
     TIMELINE_QUESTION,
 )
-from services.conversation_manager.schemas import ConversationStatus
+from services.conversation_manager.conversation_service import stt_language_hint
+from services.conversation_manager.schemas import SUPPORTED_OUTPUT_LANGUAGES, ConversationStatus
 from tests.conftest import (
     FAKE_WAV,
     FIXED_ANSWERS,
@@ -133,12 +134,32 @@ def test_respond_with_audio_uses_stt(client, fakes):
     # The next fixed question comes straight away, without Qwen.
     assert data["message"] == TIMELINE_QUESTION
     assert fakes.llm.calls == []
-    # STT received a converted WAV file with the existing language setting.
+    # STT received a converted WAV file and was told to expect English.
     assert fakes.stt.calls[0]["file_existed"] is True
     assert fakes.stt.calls[0]["header"] == b"RIFF"
-    assert fakes.stt.calls[0]["language_code"] == "indic-auto"
+    assert fakes.stt.calls[0]["language_code"] == "en-IN"
     # English speech is not sent through translation.
     assert fakes.language.normalized == []
+
+
+def test_stt_listens_for_the_conversation_language(client, fakes):
+    session_id = start(client, "Hindi")["session_id"]
+
+    response = client.post(
+        f"/conversation/{session_id}/respond",
+        files={"audio_file": ("recording.wav", make_wav_bytes(), "audio/wav")},
+    )
+
+    assert response.status_code == 200, response.text
+    # Hindi first, English allowed for words like "app" or "React".
+    assert fakes.stt.calls[0]["language_code"] == "hi-IN,en-IN"
+
+
+def test_stt_language_hint_for_every_supported_language():
+    for language, code in SUPPORTED_OUTPUT_LANGUAGES.items():
+        expected = "en-IN" if language == "English" else f"{code},en-IN"
+        assert stt_language_hint(language) == expected
+    assert stt_language_hint("Klingon") == "indic-auto"
 
 
 def test_respond_requires_exactly_one_input(client):

@@ -89,6 +89,22 @@ TTS_TIMEOUT_SECONDS = 20
 ENGLISH_NAMES = ("english", "en", "en-in", "en-us")
 
 
+def stt_language_hint(preferred_language: str) -> str:
+    """
+    Tell Gnani STT which language to expect: the conversation's language plus
+    English, because people mix in English words ("app", "React", "deadline").
+    Prisma treats the list as a hint, not a lock. Unknown names fall back to
+    automatic detection.
+    """
+
+    code = SUPPORTED_OUTPUT_LANGUAGES.get(preferred_language)
+    if code is None:
+        return "indic-auto"
+    if code == "en-IN":
+        return "en-IN"
+    return f"{code},en-IN"
+
+
 class ConversationService:
 
     def __init__(
@@ -163,8 +179,10 @@ class ConversationService:
         self._validate_audio(audio_bytes, content_type)
 
         async with self._exclusive_access(session_id):
-            self.store.ensure_can_answer(session_id)
-            transcript, detected_language = await self._transcribe(audio_bytes, filename)
+            state = self.store.ensure_can_answer(session_id)
+            transcript, detected_language = await self._transcribe(
+                audio_bytes, filename, stt_language_hint(state.preferred_language)
+            )
             return await self._process_user_message(session_id, transcript, detected_language)
 
     async def respond_with_text(self, session_id: str, text: str) -> ConversationTurnResponse:
@@ -619,7 +637,12 @@ class ConversationService:
         if content_type and not content_type.lower().startswith(ACCEPTED_AUDIO_CONTENT_TYPES):
             raise InvalidAudioError("Unsupported file type. Please upload an audio recording.")
 
-    async def _transcribe(self, audio_bytes: bytes, filename: Optional[str]) -> tuple[str, Optional[str]]:
+    async def _transcribe(
+        self,
+        audio_bytes: bytes,
+        filename: Optional[str],
+        language_code: str = "indic-auto",
+    ) -> tuple[str, Optional[str]]:
         """Convert the recording with ffmpeg and send it to the existing Gnani STT pipeline."""
 
         # Only known audio types; anything else is read as WebM (Expo web / browsers).
@@ -639,7 +662,7 @@ class ConversationService:
                 logger.warning("Audio conversion failed: %s", error)
                 raise InvalidAudioError() from error
 
-            result = await self.stt_pipeline.transcribe(audio_path=str(wav_path), language_code="indic-auto")
+            result = await self.stt_pipeline.transcribe(audio_path=str(wav_path), language_code=language_code)
 
         if not result.get("success"):
             # The error text comes from httpx and never contains the API key.

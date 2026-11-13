@@ -98,7 +98,7 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
   const viewingId = useChatStore((state) => state.viewingId);
   const viewHistory = useChatStore((state) => state.viewHistory);
   const deleteHistory = useChatStore((state) => state.deleteHistory);
-  const responseLanguage = usePreferencesStore((state) => state.languages.response);
+  const language = usePreferencesStore((state) => state.language);
   const addIdea = useWorkspaceStore((state) => state.addIdea);
 
   const listRef = useRef<FlatListType<ChatMessage>>(null);
@@ -120,7 +120,7 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
     if (!canSend) return;
     const value = text;
     setText("");
-    void send(value, responseLanguage);
+    void send(value, language);
   };
 
   const saveAsIdea = (message: ChatMessage) => {
@@ -192,7 +192,7 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
           renderItem={({ item }) => (
             <ChatMessageRow
               message={item}
-              onRetry={() => void retry(item.id, responseLanguage)}
+              onRetry={() => void retry(item.id, language)}
               onSaveAsIdea={() => saveAsIdea(item)}
               onOpenIdea={(ideaId) => router.push({ pathname: "/ideas/[id]", params: { id: ideaId } })}
               onOpenProject={(projectId) => router.push({ pathname: "/project/[id]", params: { id: projectId } })}

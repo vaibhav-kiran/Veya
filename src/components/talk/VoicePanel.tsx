@@ -66,7 +66,7 @@ export function VoicePanel() {
   const cancel = useConversationStore((state) => state.cancel);
   const startNewConversation = useConversationStore((state) => state.startNewConversation);
   const dismissError = useConversationStore((state) => state.dismissError);
-  const responseLanguage = usePreferencesStore((state) => state.languages.response);
+  const language = usePreferencesStore((state) => state.language);
 
   const listening = phase === "listening";
   const rings = useLoop(2000, true);
@@ -91,7 +91,7 @@ export function VoicePanel() {
     switch (phase) {
       case "idle":
       case "completed":
-        void startVoiceConversation(responseLanguage);
+        void startVoiceConversation(language);
         return;
       case "listening":
         void voiceControls.stopAndSend();
