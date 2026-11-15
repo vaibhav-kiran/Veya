@@ -6,7 +6,7 @@
 
 **Think it. Speak it. Build it.**
 
-Talk through a rough idea, and Veya turns it into a project plan you can actually build: a step-by-step blueprint, a README, a workflow diagram and a timeline that fits your deadline.
+Your idea companion. Talk through your ideas, pick the one worth building, and get a plan you can start on today.
 
 <a href="https://drive.google.com/file/d/1nNryG1SvNe19qxy6zwutwOx92dzWi12L/view">
   <img src="docs/demo-cover.jpg" alt="Watch the 2-minute Veya demo" width="720" />
@@ -18,35 +18,29 @@ Talk through a rough idea, and Veya turns it into a project plan you can actuall
 
 ---
 
-## Why we built it
+## The problem
 
-Every hackathon starts the same way: an idea, a chatbot, and an hour of half-answers about which framework and which database. Veya flips that around. **Veya asks you** the few questions that matter, out loud, in your own language, then hands you a plan.
+Students spend too long ideating. They go back and forth with ChatGPT or Claude, burn through tokens, and end up buried in long, unfocused answers before they've built anything. And they still don't know if their idea has already been done, or whether it fits the hackathon they're entering.
 
-## Features
+## How Veya fixes it
 
-**Talk**
-- Plan a project by voice or text chat, in English or nine Indian languages
-- Veya asks only what it still needs, then reads back a summary to confirm
-- **Idea Check:** finds similar projects on GitHub and Devpost, suggests how to stand out, and checks whether you can build it in time
-- Choose the model per conversation: Qwen (local), Gemini or Groq
+**1. Ideate one idea at a time.** Talk to Veya about an idea. It asks only the questions that matter, then turns it into a full project: plan, README, workflow diagram and timeline. Then talk about the next one. When you're done ideating, all your projects are ready and waiting.
 
-**Projects**
-- Each plan has a blueprint, README, workflow diagram, optional concept image and timeline
-- Edit any section by hand, or say what to change by voice (with undo)
+**2. Analyze them for your event.** Hackathon, college project or anything else: just say its name or paste a link. Veya looks up the event, finds its judging criteria and scores each of your ideas against them, so you see which one is worth building.
 
-**Analyze**
-- Make a folder for a hackathon or event. For a hackathon, Veya looks up its themes, tracks and judging criteria
-- Drag in your projects, then go through five steps: **Add → Analyze → Check → Enhance → Implement**
-- Veya scores each project against the criteria, checks it against existing work, suggests improvements and applies them to the plan
+**3. See what already exists.** Veya searches GitHub and Devpost for real projects like yours, with links. A general chatbot won't show you that.
 
-**Innovator**
-- No idea yet? Veya researches real problems and suggests up to three ideas, with sources
+**4. Make yours better than theirs.** Veya suggests how to stand out from those projects and fit the criteria better. One tap applies the changes to your whole project, workflow and README, ready to build from directly.
 
-**Calendar**
-- Deadlines split into phases, daily tasks to tick off, and every project's progress
+**5. Build on time.** Every project's deadline is split into phases and daily tasks on your timeline, so you stay on track.
 
-**Settings**
-- Language, theme, and a profile photo or mascot
+**No idea yet? No problem.** Tell Veya what you're into, your skills and your time. It researches real problems and gives you the most novel ideas you can actually build, with sources. No need to keep asking other AIs for a good idea.
+
+**Talk in your language.** English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati or Punjabi, by voice or text.
+
+Veya makes the ideation stage faster, easier and structured.
+
+**This is Veya, your idea companion. Let's start building.**
 
 ## How it works
 
