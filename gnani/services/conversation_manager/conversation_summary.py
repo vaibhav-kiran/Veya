@@ -53,6 +53,9 @@ def as_phrase(text: str) -> str:
     return text
 
 
+SUMMARY_CLOSING = "Shall I start building your project plan, or would you like to change anything?"
+
+
 def build_confirmation_summary(state: ConversationState) -> str:
     details = state.project_details
     sentences: list[str] = ["Here's what I've understood so far."]
@@ -128,6 +131,6 @@ def build_confirmation_summary(state: ConversationState) -> str:
         skipped_names = [name.replace("_", " ") for name in state.skipped_fields]
         sentences.append(f"You're not sure yet about the {join_naturally(skipped_names)}, and that's fine.")
 
-    sentences.append("Is everything correct, or would you like to change anything?")
+    sentences.append(SUMMARY_CLOSING)
 
     return " ".join(sentences)

@@ -16,7 +16,9 @@ export type PlanBlock =
   | { kind: "paragraph"; text: string }
   | { kind: "bullets"; items: string[] }
   | { kind: "steps"; items: string[] }
-  | { kind: "facts"; items: PlanFact[] };
+  | { kind: "facts"; items: PlanFact[] }
+  | { kind: "code"; language: string; text: string }
+  | { kind: "table"; headers: string[]; rows: string[][] };
 
 export type PlanSection = {
   /** "1", "2", … when the model numbered the heading. */
@@ -37,6 +39,19 @@ const STEP = /^\s*(\d+)[.)]\s+(.*)$/;
 const FACT_BOLD = /^\*\*(.+?)\*\*\s*[:\-–]\s*(.+)$/;
 const FACT_PLAIN = /^([A-Z][\w /&()+.-]{1,32}):\s+(.+)$/;
 const NUMBERED_TITLE = /^(\d+)[.)]\s*(.*)$/;
+/** "7.1 Project Structure" (a sub-section number; the trailing dot is optional). */
+const SUB_NUMBERED_TITLE = /^(\d+(?:\.\d+)+)[.)]?\s+(.*)$/;
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_DIVIDER = /^:?-{2,}:?$/;
+
+function tableCells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => stripBold(cleanText(cell)));
+}
 
 /** Strip Markdown emphasis characters that the app doesn't render separately. */
 function cleanText(text: string): string {
@@ -58,6 +73,8 @@ export function parsePlan(markdown: string, projectTitle?: string): ParsedPlan {
   const sections: PlanSection[] = [];
   let paragraph: string[] = [];
   let inCodeFence = false;
+  let code: { language: string; lines: string[] } | null = null;
+  let table: Extract<PlanBlock, { kind: "table" }> | null = null;
 
   const target = () => (sections.length ? sections[sections.length - 1].blocks : intro);
 
@@ -86,9 +103,37 @@ export function parsePlan(markdown: string, projectTitle?: string): ParsedPlan {
     const line = rawLine.trimEnd();
 
     if (line.trim().startsWith("```")) {
-      inCodeFence = !inCodeFence;
+      flushParagraph();
+      table = null;
+      if (code) {
+        // Drop leading/trailing blank lines but keep the code's indentation.
+        const text = code.lines.join("\n").replace(/^\n+|\s+$/g, "");
+        if (text) target().push({ kind: "code", language: code.language, text });
+        code = null;
+      } else {
+        code = { language: line.trim().slice(3).trim(), lines: [] };
+      }
+      inCodeFence = code !== null;
       continue;
     }
+    if (code) {
+      code.lines.push(rawLine.replace(/\t/g, "  ").trimEnd());
+      continue;
+    }
+
+    if (TABLE_ROW.test(line)) {
+      flushParagraph();
+      const cells = tableCells(line);
+      if (cells.every((cell) => TABLE_DIVIDER.test(cell.replace(/\s/g, "")))) continue;
+      if (table) table.rows.push(cells);
+      else {
+        table = { kind: "table", headers: cells, rows: [] };
+        target().push(table);
+      }
+      continue;
+    }
+    table = null;
+
     if (!line.trim()) {
       flushParagraph();
       continue;
@@ -102,7 +147,7 @@ export function parsePlan(markdown: string, projectTitle?: string): ParsedPlan {
       const text = stripBold(cleanText(heading[2]));
       // The top title usually repeats the project name, which the screen already shows.
       if (level === 1 && (!projectTitle || normalise(text) === normalise(projectTitle) || sections.length === 0)) continue;
-      const numbered = NUMBERED_TITLE.exec(text);
+      const numbered = SUB_NUMBERED_TITLE.exec(text) ?? NUMBERED_TITLE.exec(text);
       sections.push({ number: numbered ? numbered[1] : null, title: numbered ? numbered[2] : text, blocks: [] });
       continue;
     }
@@ -120,6 +165,8 @@ export function parsePlan(markdown: string, projectTitle?: string): ParsedPlan {
     paragraph.push(line.trim());
   }
   flushParagraph();
+  // An unclosed code fence (cut-off answer): keep what was written.
+  if (code && code.lines.join("").trim()) target().push({ kind: "code", language: code.language, text: code.lines.join("\n").trim() });
 
   return { intro, sections: sections.filter((section) => section.blocks.length > 0) };
 }
@@ -146,4 +193,24 @@ export function parseInline(text: string): InlineSegment[] {
 /** Values the model uses for "nothing here" — shown dimmed rather than as real content. */
 export function isPlaceholderValue(value: string): boolean {
   return /^(not required( for (the )?mvp)?|not specified|not mentioned|unknown|none|n\/a|na|tbd|-)\.?$/i.test(value.trim());
+}
+
+const IMPLEMENTATION_HEADING = /implementation|build order|how to build/i;
+
+/**
+ * The README's implementation part: "## 7. Implementation Plan" (project
+ * structure, frontend, backend...) and the step-by-step build order, as
+ * Markdown. Empty when the README has neither.
+ */
+export function extractImplementation(markdown: string): string {
+  const kept: string[] = [];
+  let keeping = false;
+  let inFence = false;
+  for (const line of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.trim().startsWith("```")) inFence = !inFence;
+    const level2 = !inFence && /^##\s+/.test(line.trim()) && !/^###/.test(line.trim());
+    if (level2) keeping = IMPLEMENTATION_HEADING.test(line);
+    if (keeping) kept.push(line);
+  }
+  return kept.join("\n").trim();
 }

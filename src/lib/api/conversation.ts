@@ -1,4 +1,7 @@
+import { File } from "expo-file-system";
 import { Platform } from "react-native";
+
+import type { AiModel } from "@/constants/aiModels";
 
 import type {
   BackendLanguage,
@@ -6,6 +9,7 @@ import type {
   ConfirmConversationResponse,
   ConversationStateResponse,
   ConversationTurnResponse,
+  IdeaChoice,
 } from "@/types/api";
 
 import { apiHeaders, apiRequest, apiUrl } from "./client";
@@ -18,10 +22,14 @@ const GENERATION_TIMEOUT_MS = 10 * 60_000;
 const sessionPath = (sessionId: string, suffix = "") => `/conversation/${encodeURIComponent(sessionId)}${suffix}`;
 
 /** `returningUser`: they've heard Veya's full introduction before, so she keeps the greeting short. */
-export function startConversation(preferredLanguage: BackendLanguage, returningUser = false): Promise<ConversationTurnResponse> {
+export function startConversation(
+  preferredLanguage: BackendLanguage,
+  returningUser = false,
+  model: AiModel = "qwen",
+): Promise<ConversationTurnResponse> {
   return apiRequest("/conversation/start", {
     method: "POST",
-    json: { preferred_language: preferredLanguage, returning_user: returningUser },
+    json: { preferred_language: preferredLanguage, returning_user: returningUser, model },
     timeoutMs: TURN_TIMEOUT_MS,
   });
 }
@@ -37,21 +45,30 @@ function audioFileName(uri: string): { name: string; type: string } {
   return { name: "answer.m4a", type: "audio/m4a" };
 }
 
+/** Add a recording to a form as `audio_file` (web: blob URL; native: a file read with expo-file-system). */
+export async function audioFormPart(form: FormData, audio: RecordedAudio): Promise<void> {
+  if (Platform.OS === "web") {
+    // Web recordings are blob: URLs (WebM/Opus); the backend converts with ffmpeg.
+    const blob = await (await fetch(audio.uri)).blob();
+    form.append("audio_file", blob, "answer.webm");
+    return;
+  }
+  // Expo's fetch rejects React Native's old {uri, name, type} file parts
+  // ("Unsupported FormDataPart implementation"). It accepts any part with
+  // name, type and bytes(), so read the recording with expo-file-system.
+  const uri = audio.uri.startsWith("/") ? `file://${audio.uri}` : audio.uri;
+  const { name, type } = audioFileName(uri);
+  const part = { name, type, bytes: async () => new Uint8Array(await new File(uri).arrayBuffer()) };
+  form.append("audio_file", part as unknown as Blob);
+}
+
 export async function respondWithAudio(
   sessionId: string,
   audio: RecordedAudio,
   signal?: AbortSignal,
 ): Promise<ConversationTurnResponse> {
   const form = new FormData();
-  if (Platform.OS === "web") {
-    // Web recordings are blob: URLs (WebM/Opus); the backend converts with ffmpeg.
-    const blob = await (await fetch(audio.uri)).blob();
-    form.append("audio_file", blob, "answer.webm");
-  } else {
-    const { name, type } = audioFileName(audio.uri);
-    // React Native's FormData uploads a local file from this {uri, name, type} shape.
-    form.append("audio_file", { uri: audio.uri, name, type } as unknown as Blob);
-  }
+  await audioFormPart(form, audio);
   return apiRequest(sessionPath(sessionId, "/respond"), { method: "POST", form, timeoutMs: TURN_TIMEOUT_MS, signal });
 }
 
@@ -63,8 +80,13 @@ export function requestSummary(sessionId: string): Promise<ConversationTurnRespo
   return apiRequest(sessionPath(sessionId, "/summary"), { method: "POST", timeoutMs: TURN_TIMEOUT_MS });
 }
 
-export function confirmConversation(sessionId: string): Promise<ConfirmConversationResponse> {
-  return apiRequest(sessionPath(sessionId, "/confirm"), { method: "POST", timeoutMs: GENERATION_TIMEOUT_MS });
+/** `choice` comes from Idea Check (build as it is, with an angle, or the smaller version). */
+export function confirmConversation(sessionId: string, choice?: IdeaChoice): Promise<ConfirmConversationResponse> {
+  return apiRequest(sessionPath(sessionId, "/confirm"), {
+    method: "POST",
+    json: choice ? { choice } : undefined,
+    timeoutMs: GENERATION_TIMEOUT_MS,
+  });
 }
 
 export function cancelConversation(sessionId: string): Promise<CancelConversationResponse> {

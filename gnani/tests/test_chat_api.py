@@ -20,7 +20,7 @@ def start(client) -> str:
 
 
 def send(client, session_id: str, text: str) -> dict:
-    response = client.post(f"/chat/{session_id}/message", json={"text": text})
+    response = client.post(f"/chat/{session_id}/message", json={"text": text}, headers=USER)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -63,7 +63,7 @@ def test_chat_summary_confirmation_and_saved_project(client, fakes):
     agreed = send(client, session_id, "Yes, build it")
     assert agreed["status"] == "ready_to_generate"
 
-    confirmed = client.post(f"/chat/{session_id}/confirm")
+    confirmed = client.post(f"/chat/{session_id}/confirm", headers=USER)
     assert confirmed.status_code == 200, confirmed.text
     project_id = confirmed.json()["project_id"]
     assert project_id
@@ -72,16 +72,16 @@ def test_chat_summary_confirmation_and_saved_project(client, fakes):
 
 def test_chat_and_voice_sessions_are_separate(client):
     session_id = start(client)
-    assert client.get(f"/conversation/{session_id}").status_code == 404
-    assert client.get(f"/chat/{session_id}").status_code == 200
+    assert client.get(f"/conversation/{session_id}", headers=USER).status_code == 404
+    assert client.get(f"/chat/{session_id}", headers=USER).status_code == 200
 
 
 def test_cancel_chat(client):
     session_id = start(client)
-    assert client.post(f"/chat/{session_id}/cancel").json()["status"] == "cancelled"
-    assert client.post(f"/chat/{session_id}/message", json={"text": "hello"}).status_code == 409
+    assert client.post(f"/chat/{session_id}/cancel", headers=USER).json()["status"] == "cancelled"
+    assert client.post(f"/chat/{session_id}/message", json={"text": "hello"}, headers=USER).status_code == 409
 
 
 def test_empty_message_is_rejected(client):
     session_id = start(client)
-    assert client.post(f"/chat/{session_id}/message", json={"text": ""}).status_code == 422
+    assert client.post(f"/chat/{session_id}/message", json={"text": ""}, headers=USER).status_code == 422

@@ -48,12 +48,12 @@ def test_free_plan_without_images_gets_403(client, fakes, monkeypatch):
     headers = {"X-Veya-User": "user_free"}
     session_id = client.post("/conversation/start", json={}, headers=headers).json()["session_id"]
     for answer in FIXED_ANSWERS:
-        client.post(f"/conversation/{session_id}/respond", data={"text": answer})
+        client.post(f"/conversation/{session_id}/respond", data={"text": answer}, headers=headers)
     fakes.llm.queue(extraction_json())
-    client.post(f"/conversation/{session_id}/summary")
-    project_id = client.post(f"/conversation/{session_id}/confirm").json()["project_id"]
+    client.post(f"/conversation/{session_id}/summary", headers=headers)
+    project_id = client.post(f"/conversation/{session_id}/confirm", headers=headers).json()["project_id"]
 
-    assert client.post(f"/conversation/{session_id}/generate-image").status_code == 403
+    assert client.post(f"/conversation/{session_id}/generate-image", headers=headers).status_code == 403
     assert client.post(f"/projects/{project_id}/generate-image", headers=headers).status_code == 403
     assert fakes.image.calls == []
 

@@ -73,7 +73,8 @@ def test_start_rejects_unsupported_language(client):
 def test_start_in_hindi_translates_and_speaks_hindi(client, fakes):
     data = start(client, "hindi")
 
-    assert data["message"].startswith("[Hindi]")
+    # Fixed lines use the hand-written translation (services/language_layer/fixed_translations.py).
+    assert data["message"].startswith("नमस्ते! मैं वेया हूँ।")
     assert fakes.tts.calls[0]["language"] == "hi-IN"
 
 
@@ -564,3 +565,90 @@ def test_supported_audio_types():
 
     assert is_supported_audio(Path("a.m4a")) and is_supported_audio(Path("a.WEBM"))
     assert not is_supported_audio(Path("a.m3u8")) and not is_supported_audio(Path("a.txt"))
+
+
+def test_question_after_summary_gets_an_answer_not_the_summary_again(client, fakes):
+    """Gemini labels answers after the summary as request_confirmation; don't re-read the summary."""
+    session_id = start(client)["session_id"]
+    move_to_confirmation(client, fakes, session_id)
+    fakes.llm.queue(decision_json(
+        next_action="request_confirmation",
+        ready_for_confirmation=True,
+        response="Mostly households and offices.",
+    ))
+
+    data = client.post(f"/conversation/{session_id}/respond", data={"text": "Who would use this mostly?"}).json()
+
+    assert data["status"] == "awaiting_confirmation"
+    assert not data["message"].startswith("Here's what I've understood so far.")
+    assert data["message"].startswith("Mostly households and offices.")
+    assert data["message"].endswith("shall I build your project plan?")
+
+
+def test_yes_after_a_question_following_the_summary_builds_the_project(client, fakes):
+    session_id = start(client)["session_id"]
+    move_to_confirmation(client, fakes, session_id)
+    fakes.llm.queue(
+        decision_json(next_action="ask_question", question_topic="target_users", response="Homes and offices. Anything else?"),
+        decision_json(next_action="generate_project", response=""),
+    )
+
+    asked = client.post(f"/conversation/{session_id}/respond", data={"text": "Who would use this?"}).json()
+    yes = client.post(f"/conversation/{session_id}/respond", data={"text": "Yes, go ahead"}).json()
+
+    assert asked["status"] == "awaiting_confirmation"
+    assert yes["status"] == "ready_to_generate"
+
+
+import pytest as _pytest
+
+from services.conversation_manager.conversation_pipeline import is_plain_confirmation
+
+
+@_pytest.mark.parametrize(
+    "text",
+    ["Yes", "Yes, yeah.", "Everything is correct.", "No, everything is correct.", "Everything is right.",
+     "No, nothing else.", "Go ahead and build it", "Continue building the project.", "Okay, start"],
+)
+def test_plain_confirmations(text):
+    assert is_plain_confirmation(text)
+
+
+@_pytest.mark.parametrize(
+    "text",
+    ["No", "I didn't put my name.", "Change the deadline to 3 weeks", "Yes but add a buzzer",
+     "Actually use Flutter", "Correct the deadline please", "That's not right", "Who would use this?"],
+)
+def test_not_plain_confirmations(text):
+    assert not is_plain_confirmation(text)
+
+
+def test_plain_yes_after_summary_builds_without_asking_the_model(client, fakes):
+    session_id = start(client)["session_id"]
+    move_to_confirmation(client, fakes, session_id)
+    calls_before = len(fakes.llm.calls)
+
+    data = client.post(f"/conversation/{session_id}/respond", data={"text": "Everything is correct."}).json()
+
+    assert data["status"] == "ready_to_generate"
+    assert len(fakes.llm.calls) == calls_before  # decided in code, not by the model
+
+
+def test_generation_is_retried_once(client, fakes):
+    session_id = start(client)["session_id"]
+    move_to_confirmation(client, fakes, session_id)
+    original = fakes.reasoning.reason
+    attempts = []
+
+    def flaky(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ValueError("Invalid JSON returned by model")
+        return original(*args, **kwargs)
+
+    fakes.reasoning.reason = flaky
+
+    data = client.post(f"/conversation/{session_id}/confirm").json()
+
+    assert data["status"] == "completed"
+    assert len(attempts) == 2

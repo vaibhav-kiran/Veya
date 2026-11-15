@@ -6,8 +6,19 @@ import { themed } from "@/theme";
  */
 const MERMAID_SRC = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js";
 
+/**
+ * Quote edge labels that aren't quoted yet: `A -->|REST (POST /x)| B` breaks
+ * Mermaid (the bracket starts a shape), `A -->|"REST (POST /x)"| B` doesn't.
+ * New diagrams come quoted from the backend; this fixes ones saved earlier.
+ */
+export function quoteEdgeLabels(code: string): string {
+  return code.replace(/(--+>|==+>|-\.->)\|(?!")([^|\n]*)\|/g, (_match, arrow: string, label: string) => {
+    return `${arrow}|"${label.trim().replace(/"/g, "#quot;")}"|`;
+  });
+}
+
 export function mermaidHtml(code: string): string {
-  const source = JSON.stringify(code).replace(/</g, "\\u003c");
+  const source = JSON.stringify(quoteEdgeLabels(code)).replace(/</g, "\\u003c");
   return themed(`<!doctype html>
 <html>
 <head>

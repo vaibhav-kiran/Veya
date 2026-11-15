@@ -9,13 +9,14 @@ All conversation logic lives in services/conversation_manager.
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, Path, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Request, UploadFile
 from fastapi.responses import Response
 
 from services.conversation_manager.conversation_service import (
     MAX_AUDIO_BYTES,
     ConversationService,
 )
+from webapp.auth import CurrentUser
 from services.conversation_manager.errors import (
     ConversationBusyError,
     ConversationError,
@@ -25,12 +26,14 @@ from services.conversation_manager.errors import (
     InvalidAudioError,
     InvalidConversationStateError,
     LanguageModelError,
+    ModelUnavailableError,
     PlanLimitError,
     ProjectGenerationError,
     SpeechRecognitionError,
 )
 from services.conversation_manager.schemas import (
     CancelConversationResponse,
+    ConfirmConversationRequest,
     ConfirmConversationResponse,
     ConversationStateResponse,
     ConversationTurnResponse,
@@ -53,6 +56,7 @@ ERROR_STATUS_CODES: dict[type[ConversationError], int] = {
     EmptyTranscriptError: 422,
     SpeechRecognitionError: 502,
     LanguageModelError: 503,
+    ModelUnavailableError: 503,
     ProjectGenerationError: 502,
     ImageGenerationError: 500,
     PlanLimitError: 403,
@@ -69,6 +73,18 @@ def to_http_error(error: ConversationError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=error.user_message)
 
 
+def owned_session_id(request: Request, session_id: SessionId, user: CurrentUser) -> str:
+    """The session id, after checking it belongs to the signed-in user."""
+    try:
+        get_service(request).ensure_owner(session_id, user)
+    except ConversationError as error:
+        raise to_http_error(error) from error
+    return session_id
+
+
+OwnedSessionId = Annotated[str, Depends(owned_session_id)]
+
+
 # =========================================================
 # ROUTES
 # =========================================================
@@ -77,14 +93,14 @@ def to_http_error(error: ConversationError) -> HTTPException:
 @router.post("/start", response_model=ConversationTurnResponse)
 async def start_conversation(
     request: Request,
+    user: CurrentUser,
     body: Optional[StartConversationRequest] = None,
-    x_veya_user: Annotated[Optional[str], Header(max_length=128)] = None,
 ) -> ConversationTurnResponse:
     body = body or StartConversationRequest()
     try:
         # The project generated from this conversation is saved for this user.
         return await get_service(request).start_conversation(
-            body.preferred_language, owner_id=x_veya_user, returning_user=body.returning_user
+            body.preferred_language, owner_id=user, returning_user=body.returning_user, model=body.model
         )
     except ConversationError as error:
         raise to_http_error(error) from error
@@ -93,7 +109,7 @@ async def start_conversation(
 @router.post("/{session_id}/respond", response_model=ConversationTurnResponse)
 async def respond(
     request: Request,
-    session_id: SessionId,
+    session_id: OwnedSessionId,
     audio_file: Optional[UploadFile] = File(default=None),
     text: Optional[str] = Form(default=None),
 ) -> ConversationTurnResponse:
@@ -125,7 +141,7 @@ async def respond(
 
 
 @router.post("/{session_id}/summary", response_model=ConversationTurnResponse)
-async def create_summary(request: Request, session_id: SessionId) -> ConversationTurnResponse:
+async def create_summary(request: Request, session_id: OwnedSessionId) -> ConversationTurnResponse:
     """
     After the three fixed questions: Qwen reads all answers once and VEYA
     reads back the summary. Can be called again if Qwen failed.
@@ -138,7 +154,7 @@ async def create_summary(request: Request, session_id: SessionId) -> Conversatio
 
 
 @router.get("/{session_id}", response_model=ConversationStateResponse)
-async def get_conversation(request: Request, session_id: SessionId) -> ConversationStateResponse:
+async def get_conversation(request: Request, session_id: OwnedSessionId) -> ConversationStateResponse:
     try:
         return get_service(request).get_conversation_view(session_id)
     except ConversationError as error:
@@ -147,7 +163,13 @@ async def get_conversation(request: Request, session_id: SessionId) -> Conversat
 
 @router.get("/{session_id}/audio")
 async def get_latest_audio(request: Request, session_id: SessionId) -> Response:
-    """The WAV audio of VEYA's latest reply."""
+    """
+    The WAV audio of VEYA's latest reply.
+
+    No sign-in check here: audio players on the web can't send an
+    Authorization header. The session id in the URL is a 43-character
+    random token that only the conversation's owner has.
+    """
 
     try:
         audio_bytes = get_service(request).get_latest_audio(session_id)
@@ -165,15 +187,18 @@ async def get_latest_audio(request: Request, session_id: SessionId) -> Response:
 
 
 @router.post("/{session_id}/confirm", response_model=ConfirmConversationResponse)
-async def confirm_conversation(request: Request, session_id: SessionId) -> ConfirmConversationResponse:
+async def confirm_conversation(
+    request: Request, session_id: OwnedSessionId, body: Optional[ConfirmConversationRequest] = None
+) -> ConfirmConversationResponse:
+    """Build the project. Optional body: {"choice": "as_is" | "smaller" | "angle:0..2"} from Idea Check."""
     try:
-        return await get_service(request).confirm_and_generate(session_id)
+        return await get_service(request).confirm_and_generate(session_id, choice=body.choice if body else None)
     except ConversationError as error:
         raise to_http_error(error) from error
 
 
 @router.post("/{session_id}/cancel", response_model=CancelConversationResponse)
-async def cancel_conversation(request: Request, session_id: SessionId) -> CancelConversationResponse:
+async def cancel_conversation(request: Request, session_id: OwnedSessionId) -> CancelConversationResponse:
     try:
         return get_service(request).cancel(session_id)
     except ConversationError as error:
@@ -181,7 +206,7 @@ async def cancel_conversation(request: Request, session_id: SessionId) -> Cancel
 
 
 @router.post("/{session_id}/generate-image", response_model=GenerateImageResponse)
-async def generate_image(request: Request, session_id: SessionId) -> GenerateImageResponse:
+async def generate_image(request: Request, session_id: OwnedSessionId) -> GenerateImageResponse:
     """Stable Diffusion runs ONLY when the user explicitly asks for it."""
 
     try:

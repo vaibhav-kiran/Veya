@@ -19,6 +19,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from webapp.auth import Authenticator
+
 from services.conversation_manager.conversation_pipeline import ConversationPipeline
 from services.conversation_manager.conversation_service import ConversationService
 from services.conversation_manager.conversation_state import ConversationStore
@@ -315,6 +317,9 @@ def chat_service(fakes: SimpleNamespace, project_repository: ProjectRepository) 
 @pytest.fixture
 def client(service: ConversationService, chat_service: ChatService, project_repository: ProjectRepository) -> TestClient:
     app = FastAPI()
+    # Most tests identify the user with X-Veya-User (development mode);
+    # tests/test_auth.py covers real Clerk tokens.
+    app.state.authenticator = Authenticator(mode="header")
     app.state.conversation_service = service
     app.state.chat_service = chat_service
     app.state.project_repository = project_repository

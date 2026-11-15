@@ -33,43 +33,59 @@ class DiagramGenerator:
 
         lines = ["flowchart TD"]
 
-        component_ids = {}
+        # Models write names a little differently in different places
+        # ("FastAPI Backend" vs "fastapi backend"), so match loosely.
+        def key(name: str) -> str:
+            return " ".join(str(name).lower().split())
+
+        def name_of(component) -> str:
+            if isinstance(component, dict):
+                return str(component.get("name") or component.get("label") or component.get("title") or "").strip()
+            return str(component).strip()
+
+        component_ids: dict[str, str] = {}
+
+        def node_for(name: str) -> str:
+            """The node for a component, added if a connection names one that wasn't listed."""
+            if key(name) not in component_ids:
+                node_id = f"N{len(component_ids)}"
+                component_ids[key(name)] = node_id
+                lines.append(f'    {node_id}["{self.escape_mermaid_text(name)}"]')
+            return component_ids[key(name)]
 
         # Create nodes
-        for index, component in enumerate(components):
-
-            node_id = f"N{index}"
-            component_ids[component] = node_id
-
-            safe_label = self.escape_mermaid_text(component)
-
-            lines.append(f'    {node_id}["{safe_label}"]')
+        for component in components:
+            name = name_of(component)
+            if name:
+                node_for(name)
 
         # Create connections
         for connection in connections:
 
             if isinstance(connection, dict):
-                source = connection.get("from")
-                target = connection.get("to")
-                label = connection.get("label", "")
+                source = name_of(connection.get("from") or "")
+                target = name_of(connection.get("to") or "")
+                label = str(connection.get("label") or "").strip()
 
             elif isinstance(connection, str) and " to " in connection:
-                source, target = connection.split(" to ", 1)
+                source, target = (part.strip() for part in connection.split(" to ", 1))
                 label = ""
 
             else:
                 continue
 
-            if source not in component_ids or target not in component_ids:
+            if not source or not target:
                 continue
 
-            source_id = component_ids[source]
-            target_id = component_ids[target]
+            source_id = node_for(source)
+            target_id = node_for(target)
 
             if label:
+                # Quoted, so brackets, slashes and colons in the label
+                # ("REST API (POST /posts)") don't break the diagram.
                 safe_label = self.escape_mermaid_text(label)
                 lines.append(
-                    f"    {source_id} -->|{safe_label}| {target_id}"
+                    f'    {source_id} -->|"{safe_label}"| {target_id}'
                 )
             else:
                 lines.append(

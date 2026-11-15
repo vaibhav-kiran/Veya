@@ -14,10 +14,10 @@ def generate_project(client, fakes, headers=ALICE) -> dict:
     assert start.status_code == 200, start.text
     session_id = start.json()["session_id"]
     for answer in FIXED_ANSWERS:
-        assert client.post(f"/conversation/{session_id}/respond", data={"text": answer}).status_code == 200
+        assert client.post(f"/conversation/{session_id}/respond", data={"text": answer}, headers=headers).status_code == 200
     fakes.llm.queue(extraction_json())
-    assert client.post(f"/conversation/{session_id}/summary").status_code == 200
-    confirm = client.post(f"/conversation/{session_id}/confirm")
+    assert client.post(f"/conversation/{session_id}/summary", headers=headers).status_code == 200
+    confirm = client.post(f"/conversation/{session_id}/confirm", headers=headers)
     assert confirm.status_code == 200, confirm.text
     return confirm.json()
 
@@ -45,7 +45,7 @@ def test_confirm_saves_project_for_the_user(client, fakes):
 
 def test_second_confirm_returns_same_project(client, fakes):
     confirmed = generate_project(client, fakes)
-    again = client.post(f"/conversation/{confirmed['session_id']}/confirm").json()
+    again = client.post(f"/conversation/{confirmed['session_id']}/confirm", headers=ALICE).json()
     assert again["project_id"] == confirmed["project_id"]
     assert len(client.get("/projects", headers=ALICE).json()["projects"]) == 1
 
@@ -107,7 +107,7 @@ def test_image_needs_visual_data(client):
 
 def test_session_image_is_attached_to_saved_project(client, fakes):
     confirmed = generate_project(client, fakes)
-    assert client.post(f"/conversation/{confirmed['session_id']}/generate-image").status_code == 200
+    assert client.post(f"/conversation/{confirmed['session_id']}/generate-image", headers=ALICE).status_code == 200
     project = client.get(f"/projects/{confirmed['project_id']}", headers=ALICE).json()
     assert project["image_url"] == "/generated_images/HealthBand.png"
 

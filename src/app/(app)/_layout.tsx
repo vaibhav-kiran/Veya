@@ -12,7 +12,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { colors } from "@/theme";
 
 export default function AppLayout() {
-  const { userId } = useAuth();
+  const { userId, getToken } = useAuth();
   const claimForUser = useWorkspaceStore((state) => state.claimForUser);
   const languagesConfirmed = usePreferencesStore((state) => state.languagesConfirmed);
 
@@ -21,8 +21,8 @@ export default function AppLayout() {
     if (userId) claimForUser(userId);
   }, [claimForUser, userId]);
 
-  // API user header, per-account project cache, one-time upload of on-device projects.
-  useBackendUser(userId);
+  // Signed API requests, per-account project cache, one-time upload of on-device projects.
+  useBackendUser(userId, getToken);
 
   // A fresh chat on every visit; earlier chats stay in the chat history panel.
   useFreshChatOnReturn();
@@ -33,7 +33,8 @@ export default function AppLayout() {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: colors.veya.background },
-          animation: "slide_from_right",
+          // Screens just appear: no sliding, nothing to wait for.
+          animation: "none",
         }}
       >
         {/* First sign-in on a device: choose languages before entering the app. */}
@@ -42,6 +43,8 @@ export default function AppLayout() {
           <Stack.Screen name="project/[id]" />
           <Stack.Screen name="project-timeline" />
           <Stack.Screen name="idea-editor" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+          <Stack.Screen name="board-new" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+          <Stack.Screen name="board/[id]" />
           <Stack.Screen name="item-editor" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
           <Stack.Screen name="section-editor" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
           <Stack.Screen name="deadline-editor" options={{ presentation: "modal", animation: "slide_from_bottom" }} />

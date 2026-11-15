@@ -1,17 +1,19 @@
 """
 FastAPI routes for saved VEYA projects.
 
-Projects are scoped by the X-Veya-User header (see
-services/project_store/repository.py for why this is not authentication).
+Projects belong to the signed-in user (verified Clerk token, see
+webapp/auth.py); one user can never see or change another's projects.
 """
 
+import asyncio
 import logging
 import re
-from typing import Annotated, Optional
+from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Path, Request, Response
+from fastapi import APIRouter, HTTPException, Path, Request, Response
 
 from services.conversation_manager.conversation_service import ConversationService
+from webapp.auth import CurrentUser
 from services.conversation_manager.errors import (
     ConversationError,
     ImageGenerationError,
@@ -19,9 +21,13 @@ from services.conversation_manager.errors import (
     PlanLimitError,
 )
 from services.plans import PlanResolver, plan_config
+from services.llm_providers import model_unavailable_message
+from services.project_edit import ProjectEditError, edit_readme
 from services.project_store import ProjectNotFoundError, ProjectRepository
 from services.project_store.schemas import (
     CreateProjectRequest,
+    EditProjectRequest,
+    EditProjectResponse,
     ProjectImageResponse,
     ProjectListResponse,
     StoredProject,
@@ -33,7 +39,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 ProjectId = Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")]
-OwnerHeader = Annotated[Optional[str], Header(alias="X-Veya-User", max_length=128)]
 
 
 def get_repository(request: Request) -> ProjectRepository:
@@ -53,12 +58,12 @@ def not_found() -> HTTPException:
 
 
 @router.get("", response_model=ProjectListResponse)
-def list_projects(request: Request, owner: OwnerHeader = None) -> ProjectListResponse:
+def list_projects(request: Request, owner: CurrentUser) -> ProjectListResponse:
     return ProjectListResponse(projects=get_repository(request).list(owner))
 
 
 @router.post("", response_model=StoredProject, status_code=201)
-def create_project(request: Request, body: CreateProjectRequest, owner: OwnerHeader = None) -> StoredProject:
+def create_project(request: Request, body: CreateProjectRequest, owner: CurrentUser) -> StoredProject:
     """Create a project from an idea the user wrote in the app."""
     repository = get_repository(request)
     limit = plan_config(get_plan_resolver(request).plan_for(owner)).entitlements.max_projects
@@ -71,7 +76,7 @@ def create_project(request: Request, body: CreateProjectRequest, owner: OwnerHea
 
 
 @router.get("/{project_id}", response_model=StoredProject)
-def get_project(request: Request, project_id: ProjectId, owner: OwnerHeader = None) -> StoredProject:
+def get_project(request: Request, project_id: ProjectId, owner: CurrentUser) -> StoredProject:
     try:
         return get_repository(request).get(owner, project_id)
     except ProjectNotFoundError:
@@ -83,7 +88,7 @@ def update_project(
     request: Request,
     project_id: ProjectId,
     body: UpdateProjectRequest,
-    owner: OwnerHeader = None,
+    owner: CurrentUser,
 ) -> StoredProject:
     try:
         changes: dict = {"title": body.title, "sections": body.sections}
@@ -96,7 +101,7 @@ def update_project(
 
 
 @router.delete("/{project_id}", status_code=204)
-def delete_project(request: Request, project_id: ProjectId, owner: OwnerHeader = None) -> Response:
+def delete_project(request: Request, project_id: ProjectId, owner: CurrentUser) -> Response:
     try:
         get_repository(request).delete(owner, project_id)
     except ProjectNotFoundError:
@@ -105,7 +110,7 @@ def delete_project(request: Request, project_id: ProjectId, owner: OwnerHeader =
 
 
 @router.get("/{project_id}/readme")
-def download_readme(request: Request, project_id: ProjectId, owner: OwnerHeader = None) -> Response:
+def download_readme(request: Request, project_id: ProjectId, owner: CurrentUser) -> Response:
     """The README as a Markdown file download. No server paths are exposed."""
 
     try:
@@ -125,11 +130,49 @@ def download_readme(request: Request, project_id: ProjectId, owner: OwnerHeader 
     )
 
 
+@router.post("/{project_id}/edit", response_model=EditProjectResponse)
+async def edit_project(request: Request, project_id: ProjectId, body: EditProjectRequest, owner: CurrentUser) -> EditProjectResponse:
+    """Change the plan (README) as the student asked, by voice or text."""
+
+    repository = get_repository(request)
+    try:
+        project = repository.get(owner, project_id)
+    except ProjectNotFoundError:
+        raise not_found()
+
+    models = getattr(request.app.state, "llm_models", {})
+    if body.model not in models:
+        raise HTTPException(status_code=503, detail=model_unavailable_message(body.model))
+    client, model = models[body.model]
+
+    try:
+        result = await asyncio.to_thread(
+            edit_readme, client, model, project.title, project.readme_markdown, body.instruction, body.language
+        )
+    except ProjectEditError as error:
+        raise HTTPException(status_code=422, detail=error.user_message) from error
+
+    if result.changed:
+        project = repository.set_readme(owner, project_id, result.readme_markdown)
+    return EditProjectResponse(
+        project=project, summary=result.summary, changed=result.changed, changed_sections=result.changed_sections
+    )
+
+
+@router.post("/{project_id}/edit/undo", response_model=StoredProject)
+def undo_project_edit(request: Request, project_id: ProjectId, owner: CurrentUser) -> StoredProject:
+    """Put the plan back to how it was before the last change."""
+    try:
+        return get_repository(request).undo_readme(owner, project_id)
+    except ProjectNotFoundError:
+        raise not_found()
+
+
 @router.post("/{project_id}/generate-image", response_model=ProjectImageResponse)
 async def generate_project_image(
     request: Request,
     project_id: ProjectId,
-    owner: OwnerHeader = None,
+    owner: CurrentUser,
 ) -> ProjectImageResponse:
     """Stable Diffusion runs ONLY when the user explicitly asks for it."""
 

@@ -20,7 +20,8 @@ from typing import Any, Optional
 
 from services.chat_manager.chat_pipeline import ChatPipeline
 from services.chat_manager.chat_prompts import CHAT_OPENING_MESSAGE
-from services.conversation_manager.conversation_service import MAX_TEXT_ANSWER_LENGTH, ConversationService
+from services.conversation_manager.conversation_service import MAX_TEXT_ANSWER_LENGTH, ConversationService, ModelPipelines
+from services.llm_providers import QWEN
 from services.conversation_manager.conversation_state import ConversationStore
 from services.conversation_manager.errors import EmptyTranscriptError, InvalidConversationStateError
 from services.conversation_manager.project_generation import ProjectGenerator
@@ -47,6 +48,8 @@ class ChatService(ConversationService):
         image_generator: Any = None,
         project_repository: Any = None,
         plan_resolver: Optional[PlanResolver] = None,
+        other_models: Optional[dict[str, ModelPipelines]] = None,
+        idea_checker: Any = None,
     ):
         # Chat is text only: no speech-to-text or text-to-speech.
         super().__init__(
@@ -59,21 +62,27 @@ class ChatService(ConversationService):
             image_generator=image_generator,
             project_repository=project_repository,
             plan_resolver=plan_resolver,
+            other_models=other_models,
+            idea_checker=idea_checker,
         )
 
     # =====================================================
     # START
     # =====================================================
 
-    async def start_chat(self, preferred_language: str = "English", owner_id: Optional[str] = None) -> ChatTurnResponse:
+    async def start_chat(
+        self, preferred_language: str = "English", owner_id: Optional[str] = None, model: str = QWEN
+    ) -> ChatTurnResponse:
+        self._check_model_available(model)
         state = self.store.create_conversation(preferred_language)
         state.owner_id = owner_id
+        state.model_provider = model
         state.plan = self.plan_resolver.plan_for(owner_id).value
         self.store.set_status(state.session_id, ConversationStatus.COLLECTING_INFORMATION)
         # No fixed questions: the model leads from the first message.
         self.store.mark_initial_summary_done(state.session_id)
 
-        opening = await self._translate_for_user(CHAT_OPENING_MESSAGE, state.preferred_language)
+        opening = await self._translate_for_user(CHAT_OPENING_MESSAGE, state.preferred_language, state.model_provider)
         self.store.add_message(
             state.session_id,
             ConversationMessage(
@@ -103,8 +112,8 @@ class ChatService(ConversationService):
             self.store.ensure_can_answer(session_id)
             state = self.store.get_conversation(session_id)
 
-            english_text = await self._to_english(text, detected_language=None)
-            decision = await asyncio.to_thread(self.conversation_pipeline.decide_next_step, state, english_text)
+            english_text = await self._to_english(text, None, state.model_provider)
+            decision = await self._decide(state, english_text)
 
             # The user may have pressed Cancel while the model was thinking.
             if state.status == ConversationStatus.CANCELLED:
@@ -115,9 +124,10 @@ class ChatService(ConversationService):
                 ConversationMessage(role="user", text=text, english_text=english_text, message_type="answer"),
             )
 
-            action, english_reply = self.conversation_pipeline.apply_decision(self.store, session_id, decision)
+            action, english_reply = self._models(state).conversation.apply_decision(self.store, session_id, decision)
+            english_reply = await self._add_idea_check(state, action, english_reply)
 
-            reply = await self._translate_for_user(english_reply, state.preferred_language)
+            reply = await self._translate_for_user(english_reply, state.preferred_language, state.model_provider)
             self.store.add_message(
                 session_id,
                 ConversationMessage(
@@ -139,4 +149,5 @@ class ChatService(ConversationService):
             next_action=action,
             project_details=state.project_details,
             skipped_fields=state.skipped_fields,
+            idea_check=state.idea_check,
         )

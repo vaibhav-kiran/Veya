@@ -71,10 +71,10 @@ def test_short_deadline_merges_phases_one_per_day():
 def generate(client, fakes) -> dict:
     session_id = client.post("/conversation/start", json={}, headers=USER).json()["session_id"]
     for answer in FIXED_ANSWERS:
-        client.post(f"/conversation/{session_id}/respond", data={"text": answer})
+        client.post(f"/conversation/{session_id}/respond", data={"text": answer}, headers=USER)
     fakes.llm.queue(extraction_json())  # deadline: "ten days"
-    client.post(f"/conversation/{session_id}/summary")
-    project_id = client.post(f"/conversation/{session_id}/confirm").json()["project_id"]
+    client.post(f"/conversation/{session_id}/summary", headers=USER)
+    project_id = client.post(f"/conversation/{session_id}/confirm", headers=USER).json()["project_id"]
     return client.get(f"/projects/{project_id}", headers=USER).json()
 
 

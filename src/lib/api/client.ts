@@ -44,13 +44,20 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 let currentUserId: string | null = null;
 
+/** Returns the signed-in user's Clerk session token (Clerk's `getToken`). */
+export type TokenProvider = (options?: { skipCache?: boolean }) => Promise<string | null>;
+let tokenProvider: TokenProvider | null = null;
+
 /**
- * The signed-in Clerk user id, sent as `X-Veya-User` so the backend keeps
- * each account's projects apart. This is NOT authentication — the backend
- * does not verify it. Called from the app layout when the user changes.
+ * The signed-in Clerk user. Every request carries Clerk's session token
+ * (`Authorization: Bearer …`), which the backend verifies; the user id it
+ * trusts comes from that token. `X-Veya-User` is only read by a backend
+ * running in development mode (VEYA_AUTH=header).
+ * Called from the app layout when the user changes.
  */
-export function setApiUser(userId: string | null): void {
+export function setApiUser(userId: string | null, getToken: TokenProvider | null = null): void {
   currentUserId = userId;
+  tokenProvider = userId ? getToken : null;
 }
 
 export function isBackendConfigured(): boolean {
@@ -71,6 +78,27 @@ export function apiUrl(path: string): string {
 /** Headers for requests the app can't route through `apiRequest` (e.g. audio players). */
 export function apiHeaders(): Record<string, string> {
   return currentUserId ? { "X-Veya-User": currentUserId } : {};
+}
+
+/** apiHeaders plus the session token. `fresh` skips Clerk's token cache. */
+async function authHeaders(fresh = false): Promise<Record<string, string>> {
+  const headers = apiHeaders();
+  if (!tokenProvider) return headers;
+  try {
+    const token = await tokenProvider(fresh ? { skipCache: true } : undefined);
+    if (token) headers.Authorization = `Bearer ${token}`;
+  } catch {
+    // Offline or signed out: send without a token and let the server answer 401.
+  }
+  return headers;
+}
+
+/** fetch with the session token; if the server says it expired (401), retry once with a fresh one. */
+async function authorizedFetch(url: string, init: RequestInit): Promise<Response> {
+  const extra = (init.headers ?? {}) as Record<string, string>;
+  const response = await fetch(url, { ...init, headers: { ...extra, ...(await authHeaders()) } });
+  if (response.status !== 401 || !tokenProvider) return response;
+  return fetch(url, { ...init, headers: { ...extra, ...(await authHeaders(true)) } });
 }
 
 type RequestOptions = {
@@ -112,7 +140,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const forwardAbort = () => controller.abort();
   options.signal?.addEventListener("abort", forwardAbort);
 
-  const headers: Record<string, string> = { Accept: "application/json", ...apiHeaders() };
+  const headers: Record<string, string> = { Accept: "application/json" };
   let body: string | FormData | undefined;
   if (options.form) {
     // Never set Content-Type for FormData: the runtime adds the multipart boundary.
@@ -124,10 +152,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   let response: Response;
   try {
-    response = await fetch(url, { method: options.method ?? "GET", headers, body, signal: controller.signal });
+    response = await authorizedFetch(url, { method: options.method ?? "GET", headers, body, signal: controller.signal });
   } catch (error) {
     if (timedOut) throw new TimeoutError();
     if (options.signal?.aborted) throw error;
+    // Shows the real cause (e.g. unreadable upload file) in the Expo terminal.
+    if (__DEV__) console.warn(`[veya api] ${options.method ?? "GET"} ${path} failed:`, error);
     throw new NetworkError();
   } finally {
     clearTimeout(timer);
@@ -144,7 +174,7 @@ export async function apiRequestText(path: string, timeoutMs = DEFAULT_TIMEOUT_M
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch(apiUrl(path), { headers: apiHeaders(), signal: controller.signal });
+    response = await authorizedFetch(apiUrl(path), { signal: controller.signal });
   } catch {
     throw controller.signal.aborted ? new TimeoutError() : new NetworkError();
   } finally {

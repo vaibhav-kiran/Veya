@@ -90,21 +90,192 @@ def build_project_brief(state: ConversationState) -> str:
         ]
         lines.append("- Corrections the user made (the values above are already final): " + "; ".join(changes))
 
+    lines.extend(idea_check_brief(state))
     return "\n".join(lines)
 
 
-def build_reasoning_request(brief: str) -> str:
+def idea_check_brief(state: ConversationState) -> list[str]:
+    """What Idea Check found and what the student chose, for the plan."""
+
+    check = state.idea_check
+    if check is None:
+        return []
+    lines = ["", "Idea Check (done before the plan; use it in section 2 of the README):"]
+    if check.similar_projects:
+        lines.append("- Similar existing projects (real search results; link to them exactly as given):")
+        for project in check.similar_projects:
+            extra = ", won a hackathon prize" if project.winner else (f", {project.stars} GitHub stars" if project.stars else "")
+            lines.append(f"  - [{project.title}]({project.url}) ({project.source}{extra}): {project.description or 'no description'}")
+    else:
+        lines.append("- No close existing projects were found on GitHub or Devpost (that is not proof that none exist).")
+    if check.explanation:
+        lines.append(f"- Comparison: {check.explanation}")
+    lines.append(f"- Feasibility for this student: {check.feasibility.verdict.replace('_', ' ')}. {check.feasibility.reason}".rstrip())
+    direction = state.chosen_direction
+    if direction is not None:
+        lines.append(
+            f"- THE STUDENT CHOSE THIS DIRECTION. Build the whole plan around it: {direction.title}: "
+            f"{direction.description} {direction.why}".rstrip()
+        )
+    else:
+        lines.append("- The student chose to build the idea as it is.")
+        if check.angles:
+            lines.append("- Other ways to stand out that were suggested (mention under Next Steps): " + "; ".join(a.title for a in check.angles))
+    return lines
+
+
+# The structure of the README for a confirmed project. It is the user's
+# implementation guide, so it must say HOW to build the project, not just
+# what it is. (The general Reasoning prompt asks for a short README for
+# other requests; this request overrides that.)
+IMPLEMENTATION_README_STRUCTURE = """
+# <Project Name>
+
+## 1. Overview
+What it is, the problem it solves, and who it is for (2-4 sentences).
+
+## 2. What Makes It Different
+The similar projects from the Idea Check (as Markdown links, exactly as given) and, for each, how this project differs. If the student chose a direction, explain how it makes the project stand out. If nothing similar was found, say so honestly.
+
+## 3. Features
+Bullet list. Mark each as **Must have** or **Nice to have**. The features of the chosen direction are Must have.
+
+## 4. Technology Stack
+A table: | Part | Technology | Why |. Say which the user chose and which are your recommendations.
+
+## 5. What You Need
+Hardware (with quantities), software, libraries, accounts or APIs. Include rough costs only if the user gave a budget.
+
+## 6. How It Works
+The architecture: the main components and how data or signals flow between them, step by step.
+
+## 7. Step-by-Step Implementation
+Numbered phases in build order (setup, each feature, integration). For EVERY phase give:
+- **Goal:** what is working at the end of the phase.
+- **Steps:** concrete numbered actions: commands to run, libraries to install, files to create.
+- **Details:** for hardware, the exact wiring (component pin -> board pin); for software, the key functions, endpoints or screens.
+- **Code:** a short code snippet for the core logic of that phase, in the chosen language.
+- **Test it:** how to check the phase works before moving on.
+
+## 8. Timeline
+A day-by-day or week-by-week plan that fits the user's deadline and available time, using the phases above.
+
+## 9. Testing and Demo Checklist
+Checkbox list covering every Must have feature, plus what to show in the demo.
+
+## 10. Common Problems and Tips
+The 3-5 most likely problems (for example wiring, power, permissions, API limits) and how to fix each.
+
+## 11. Next Steps
+Improvements after the first version works.
+"""
+
+
+# Gemini only: adds the full Implementation Plan (project structure, frontend,
+# backend, data, hardware, connections, deployment). Too long for the local
+# Qwen model, which keeps the structure above.
+DETAILED_IMPLEMENTATION_README_STRUCTURE = """
+# <Project Name>
+
+## 1. Overview
+What it is, the problem it solves, and who it is for (2-4 sentences).
+
+## 2. What Makes It Different
+The similar projects from the Idea Check (as Markdown links, exactly as given) and, for each, how this project differs. If the student chose a direction, explain how it makes the project stand out. If nothing similar was found, say so honestly.
+
+## 3. Features
+Bullet list. Mark each as **Must have** or **Nice to have**. The features of the chosen direction are Must have.
+
+## 4. Technology Stack
+A table: | Part | Technology | Why |. One row for each part (frontend, backend, database, AI/ML, hardware, hosting) that this project has. Say which the user chose and which are your recommendations.
+
+## 5. What You Need
+Hardware (with quantities), software, libraries, accounts or APIs. Include rough costs only if the user gave a budget.
+
+## 6. How It Works
+The architecture: the main components and how data or signals flow between them, step by step. Include a simple text diagram, for example `Phone app -> REST API -> Database`.
+
+## 7. Implementation Plan
+How to build each part of the project. Write EVERY subsection below. When the project does not have a part, write one line saying why it is not needed (for example "No backend: the app keeps its data on the phone") instead of skipping the heading.
+
+### 7.1 Project Structure
+The complete folder and file tree in a code block, covering every part (for example `frontend/`, `backend/`, `firmware/`, `ml/`, `docs/`), with a short `# comment` after each file saying what it contains. Then the commands that create the project skeleton.
+
+### 7.2 Frontend
+The app or website the user sees.
+- **Setup:** the commands to create and run it.
+- **Screens / pages:** a list of each one, what it shows, and what the user can do there.
+- **Components:** the main reusable components.
+- **State and data:** where data is kept, and how the frontend calls the backend (which endpoints, when).
+- **Code:** a snippet of the most important screen or component.
+
+### 7.3 Backend
+The server, API or cloud functions.
+- **Setup:** the commands to create and run it.
+- **API endpoints:** a table: | Method | Path | What it does | Request | Response |.
+- **Business logic:** the main modules or services and what each does.
+- **Authentication and security:** how users log in, and how secrets (API keys) are kept out of the code.
+- **Code:** a snippet of the most important endpoint.
+
+### 7.4 Database and Data
+The data models: a table or schema for each one (fields, types, relations), and where data is stored. For AI/ML: the dataset (source, size, how to prepare it), the model, and how it is trained and served.
+
+### 7.5 Hardware and Firmware
+For hardware projects: the circuit (wiring table: | Component | Pin | Board pin |), the power supply, the firmware structure, and a snippet of the main loop. Otherwise one line saying no hardware is needed.
+
+### 7.6 Connecting the Parts
+How the frontend, backend, database and hardware talk to each other (HTTP, WebSocket, MQTT, Bluetooth...), the message or JSON format, and an example of one request going through the whole system.
+
+### 7.7 Running and Deploying
+The environment variables (`.env` names only, never real values), how to run everything locally, and how to deploy each part (with free options where possible).
+
+## 8. Step-by-Step Build Order
+Numbered phases in build order (setup, each feature, integration), building on the parts in section 7. For EVERY phase give:
+- **Goal:** what is working at the end of the phase.
+- **Steps:** concrete numbered actions: commands to run, libraries to install, files to create (using the paths from 7.1).
+- **Code:** a short code snippet for the core logic of that phase, in the chosen language, when section 7 does not already show it.
+- **Test it:** how to check the phase works before moving on.
+
+## 9. Timeline
+A day-by-day or week-by-week plan that fits the user's deadline and available time, using the phases above. If the user has a team, say who builds which part.
+
+## 10. Testing and Demo Checklist
+Checkbox list covering every Must have feature, plus what to show in the demo.
+
+## 11. Common Problems and Tips
+The 3-5 most likely problems (for example wiring, power, permissions, CORS, API limits) and how to fix each.
+
+## 12. Next Steps
+Improvements after the first version works.
+"""
+
+
+def build_reasoning_request(brief: str, detailed: bool = False) -> str:
     # The Reasoning prompt only fills project_prompt (the README) "when
     # README generation is explicitly requested", so it is requested
     # explicitly here. Without this, qwen2.5:7b leaves it empty.
+    # detailed=True (Gemini) asks for the full Implementation Plan as well.
+    if detailed:
+        covers = "project structure, frontend, backend, data, wiring, libraries, commands, code snippets, test steps"
+        structure = DETAILED_IMPLEMENTATION_README_STRUCTURE
+    else:
+        covers = "wiring, libraries, commands, code snippets, test steps"
+        structure = IMPLEMENTATION_README_STRUCTURE
     return (
         "Create a complete, practical project plan and README for this confirmed project. "
         "Respect the deadline, available time, budget, team size, existing skills, available "
         "hardware and constraints. Use the technologies the user chose. Where the user asked "
         "for recommendations, recommend suitable options and explain why. Do not invent "
-        "resources the user did not mention.\n\n"
+        "requirements or resources the user did not mention.\n\n"
         "README generation IS explicitly requested: put the complete Markdown README in the "
         "project_prompt field. project_prompt must NOT be empty.\n\n"
+        "This README is the user's IMPLEMENTATION GUIDE, so for this request it must be detailed, "
+        f"not concise: give concrete implementation details ({covers}). That is not inventing "
+        "requirements; it is explaining how to build what the user asked for. Use exactly this "
+        "structure and fill every section with content specific to this project (no placeholders):\n"
+        + structure
+        + "\nThe `response` field is a short message to the user (3-5 sentences): what the plan "
+        "contains and the first thing to do. Only mention what is really in the README.\n\n"
         + brief
     )
 
@@ -193,7 +364,15 @@ def add_confirmed_facts(understanding: ProjectUnderstanding, details: ProjectDet
 class ProjectGenerator:
     """Runs the existing Perception, Reasoning and diagram components."""
 
-    def __init__(self, perception_pipeline: Any, reasoning_pipeline: Any, diagram_generator: Any):
+    def __init__(
+        self,
+        perception_pipeline: Any,
+        reasoning_pipeline: Any,
+        diagram_generator: Any,
+        detailed_plan: bool = False,
+    ):
+        # detailed_plan: ask for the full Implementation Plan (Gemini only).
+        self.detailed_plan = detailed_plan
         self.perception_pipeline = perception_pipeline
         self.reasoning_pipeline = reasoning_pipeline
         self.diagram_generator = diagram_generator
@@ -215,7 +394,7 @@ class ProjectGenerator:
         logger.info("Running Reasoning for conversation %s...", state.session_id[:8])
         reasoning_result = self.reasoning_pipeline.reason(
             understanding,
-            user_message=build_reasoning_request(brief),
+            user_message=build_reasoning_request(brief, detailed=self.detailed_plan),
         )
 
         if not isinstance(reasoning_result, dict):

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { toBackendSections } from "@/constants/projectSections";
+import type { TokenProvider } from "@/lib/api/client";
 import { isBackendConfigured, setApiUser } from "@/lib/veyaApi";
 import { useChatStore } from "@/stores/chatStore";
 import { useInnovatorStore } from "@/stores/innovatorStore";
@@ -40,10 +41,11 @@ async function migrateLegacyProjects(): Promise<void> {
  * Keeps the API client and server-backed caches in step with the signed-in
  * Clerk user, so one account's projects or conversation never show for another.
  */
-export function useBackendUser(userId: string | null | undefined): void {
+export function useBackendUser(userId: string | null | undefined, getToken: TokenProvider): void {
   useEffect(() => {
     const current = userId ?? null;
-    setApiUser(current);
+    // Set before anything below talks to the backend, so every request is signed.
+    setApiUser(current, getToken);
     if (current === lastUserId) return;
     lastUserId = current;
 
@@ -56,5 +58,5 @@ export function useBackendUser(userId: string | null | undefined): void {
     useInnovatorStore.getState().claimForUser(current);
 
     void migrateLegacyProjects().then(() => useProjectsStore.getState().refresh());
-  }, [userId]);
+  }, [getToken, userId]);
 }

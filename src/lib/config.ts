@@ -1,3 +1,6 @@
+import Constants from "expo-constants";
+import { Platform } from "react-native";
+
 /**
  * Public, client-safe configuration. `EXPO_PUBLIC_*` values are bundled into
  * the app binary — never place secrets here.
@@ -26,6 +29,19 @@ function isValidClerkPublishableKey(key: string): boolean {
  */
 export const SHOW_ONBOARDING_ON_EVERY_LAUNCH = __DEV__;
 
+/**
+ * On a phone (Expo Go), "localhost" is the phone itself, not the Mac running
+ * the backend. In development, swap it for the host the app was loaded from
+ * (the Mac's LAN address in the QR code), keeping the backend's port.
+ */
+function resolveVeyaApiUrl(configured: string): string {
+  const url = configured.trim();
+  if (!__DEV__ || Platform.OS === "web") return url;
+  const devHost = Constants.expoConfig?.hostUri?.split(":")[0];
+  if (!devHost || devHost === "localhost" || devHost === "127.0.0.1") return url;
+  return url.replace(/^(https?:\/\/)(localhost|127\.0\.0\.1)(?=[:/]|$)/, `$1${devHost}`);
+}
+
 export const appConfig = {
   clerkPublishableKey,
   clerkKeyStatus: !clerkPublishableKey
@@ -34,5 +50,5 @@ export const appConfig = {
       ? "valid"
       : "invalid",
   /** Base URL of the Veya FastAPI backend (gnani/), e.g. http://localhost:8000. */
-  veyaApiUrl: process.env.EXPO_PUBLIC_VEYA_API_URL ?? "",
+  veyaApiUrl: resolveVeyaApiUrl(process.env.EXPO_PUBLIC_VEYA_API_URL ?? ""),
 } as const;

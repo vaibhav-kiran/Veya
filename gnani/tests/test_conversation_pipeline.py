@@ -342,7 +342,7 @@ def test_summary_requests_confirmation(fakes, store, pipeline):
         "Here's what I've understood so far. Your project idea is health band. "
         "It's meant for Elderly people. You're building it for a hackathon, with a deadline of ten days. "
         "You'd like to use Python. You're not sure yet about the budget, and that's fine. "
-        "Is everything correct, or would you like to change anything?"
+        "Shall I start building your project plan, or would you like to change anything?"
     )
     assert "million" not in response
     assert store.get_conversation(session_id).status == ConversationStatus.AWAITING_CONFIRMATION

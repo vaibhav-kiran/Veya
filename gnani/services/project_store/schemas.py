@@ -9,6 +9,8 @@ A project is saved when a confirmed conversation finishes generating
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
+from services.llm_providers import ModelName
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services.conversation_manager.schemas import ProjectDetails, utc_now
@@ -73,6 +75,8 @@ class StoredProject(BaseModel):
     workflow_diagram: Optional[str] = None
     image_url: Optional[str] = None
     image_generation_available: bool = False
+    # The plan was changed by voice or text, and that change can be undone.
+    can_undo_edit: bool = False
 
     # Deadline as a date: read from what the user said, or set in the app.
     deadline_date: Optional[date] = None
@@ -84,6 +88,8 @@ class StoredProject(BaseModel):
     # the app). Older projects are filled in from what the user said.
     deadline_resolved: bool = Field(default=False, exclude=True)
     owner_id: Optional[str] = Field(default=None, exclude=True)
+    # The README before the last voice/text change (for undo).
+    previous_readme_markdown: Optional[str] = Field(default=None, exclude=True)
     visual_generation_input: Optional[dict[str, Any]] = Field(default=None, exclude=True)
 
 
@@ -127,6 +133,25 @@ class UpdateProjectRequest(BaseModel):
     @classmethod
     def title_not_empty(cls, value: Any) -> Any:
         return _clean_title(value)
+
+
+class EditProjectRequest(BaseModel):
+    """Change the plan: what the student said or typed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instruction: str = Field(min_length=1, max_length=2000)
+    model: ModelName = "qwen"
+    # The app's language, for Veya's short reply. The plan stays in English.
+    language: str = Field(default="English", max_length=40)
+
+
+class EditProjectResponse(BaseModel):
+    project: StoredProject
+    # What Veya changed (or a question when it wasn't sure).
+    summary: str
+    changed: bool
+    changed_sections: list[str]
 
 
 class ProjectImageResponse(BaseModel):

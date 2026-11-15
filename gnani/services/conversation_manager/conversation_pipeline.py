@@ -74,6 +74,9 @@ MISSING_IDEA_RESPONSE = (
 # spoken text always matches what happens next (generation starts).
 GENERATING_RESPONSE = "Great! I'm building your project plan now. This can take a few minutes."
 
+# Added after the summary has been read once, instead of reading it again.
+CONFIRM_PROMPT = "Is there anything else to change, or shall I build your project plan?"
+
 # Said when the user stops the conversation and the model gave no reply.
 CANCELLED_RESPONSE = "No problem. I've stopped this conversation. You can start a new one any time."
 
@@ -110,6 +113,50 @@ def extract_json_object(raw_text: str) -> dict[str, Any]:
         raise ValueError("The reply must be a JSON object.")
 
     return parsed
+
+
+# A reply to the summary that only says "yes, build it". Checked in code,
+# not by the model: after the summary, models (Gemini especially) tend to
+# add their own recommendations or explanations instead of building, which
+# made VEYA read the summary again and again.
+_YES_WORDS = re.compile(
+    r"\b(yes|yeah|yep|yup|ya|ok|okay|sure|correct|right|perfect|fine|good|great|"
+    r"go ahead|proceed|build|start|continue|do it|confirm|confirmed|absolutely|definitely|"
+    r"nothing else|no changes|that's all|that is all|all good|looks good|sounds good)\b"
+)
+# Anything that suggests a change, a new detail or a "no".
+_CHANGE_WORDS = re.compile(
+    r"\b(change|add|remove|replace|instead|actually|but|wait|wrong|incorrect|not right|"
+    r"not correct|isn't|is not|don't|do not|didn't|did not|stop|cancel|rather|modify|update|"
+    r"edit|also|except|missing|forgot|correct the|correct it|correct my|wrong)\b"
+)
+MAX_CONFIRMATION_WORDS = 12
+
+
+def is_plain_confirmation(english_text: str) -> bool:
+    """True for "yes", "everything is correct", "go ahead and build it", "no, nothing else"..."""
+
+    text = " ".join(english_text.lower().replace("’", "'").split())
+    if not text or len(text.split()) > MAX_CONFIRMATION_WORDS or any(char.isdigit() for char in text):
+        return False
+    return bool(_YES_WORDS.search(text)) and not _CHANGE_WORDS.search(text)
+
+
+def confirmation_decision() -> ConversationDecision:
+    """The decision for a plain "yes" to the summary: build the project."""
+
+    return ConversationDecision(next_action=ConversationAction.GENERATE_PROJECT)
+
+
+def with_confirm_prompt(reply: str) -> str:
+    """The model's reply, ending with a request to confirm (unless it already asks something)."""
+
+    reply = (reply or "").strip()
+    if not reply:
+        return CONFIRM_PROMPT
+    if reply.endswith("?"):
+        return reply
+    return f"{reply} {CONFIRM_PROMPT}"
 
 
 class ConversationPipeline:
@@ -303,8 +350,9 @@ class ConversationPipeline:
         # Do not trust its question: read the summary again instead, so the
         # user can confirm or correct it.
         if self._find_repeated_question_topic(state, decision):
-            logger.info("Replacing a repeated question with the summary.")
+            logger.info("Replacing a repeated question with a confirmation request.")
             action = ConversationAction.REQUEST_CONFIRMATION
+            response_text = ""
 
         # ---- user wants to stop ----
         if action == ConversationAction.CANCEL_CONVERSATION:
@@ -330,9 +378,18 @@ class ConversationPipeline:
                 store.record_asked_topic(session_id, "initial_idea")
                 return ConversationAction.ASK_QUESTION, MISSING_IDEA_RESPONSE
 
+            store.set_status(session_id, ConversationStatus.AWAITING_CONFIRMATION)
+
+            # The summary was already read out and nothing changed: don't read
+            # it again. Some models (Gemini) label nearly every reply after
+            # the summary as a confirmation request, even answers to a
+            # question. Keep their reply and ask to confirm. (A change, such
+            # as a corrected deadline, still gets a fresh summary to confirm.)
+            if status_before in SUMMARY_SHOWN_STATUSES and not changed_details_this_turn:
+                return ConversationAction.REQUEST_CONFIRMATION, with_confirm_prompt(response_text)
+
             # The summary is built from the stored details, so it is
             # accurate and matches the summary shown on screen.
-            store.set_status(session_id, ConversationStatus.AWAITING_CONFIRMATION)
             return ConversationAction.REQUEST_CONFIRMATION, build_confirmation_summary(state)
 
         # Remember what VEYA asked about, so it is not asked again.
@@ -340,7 +397,13 @@ class ConversationPipeline:
 
         # ---- questions ----
         if action in QUESTION_ACTIONS:
-            store.set_status(session_id, ConversationStatus.COLLECTING_INFORMATION)
+            # After the summary, answering the user's question (or asking a
+            # small follow-up) changes nothing, so the summary still stands
+            # and "yes" can build the project.
+            if status_before in SUMMARY_SHOWN_STATUSES and not changed_details_this_turn:
+                store.set_status(session_id, ConversationStatus.AWAITING_CONFIRMATION)
+            else:
+                store.set_status(session_id, ConversationStatus.COLLECTING_INFORMATION)
             return action, response_text
 
         # ---- guidance or a simple update ----

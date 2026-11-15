@@ -1,11 +1,12 @@
 import { useIsFocused } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Keyboard, StyleSheet, View, useWindowDimensions } from "react-native";
 import Animated, { useAnimatedReaction, useAnimatedScrollHandler, useSharedValue } from "react-native-reanimated";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { SwipeHint, useSwipeHint } from "@/components/SwipeHint";
 import { AuroraBackground } from "@/components/talk/AuroraBackground";
 import { MODE_INDICATOR_HEIGHT, ModeIndicator } from "@/components/talk/ModeIndicator";
 import { VoicePanel } from "@/components/talk/VoicePanel";
@@ -24,6 +25,9 @@ export default function TalkScreen() {
   // Pages in a horizontal ScrollView don't stretch vertically by themselves. Without an
   // explicit height the chat list grows to fit every message and can't scroll.
   const [pagerHeight, setPagerHeight] = useState(0);
+  const pager = useRef<Animated.ScrollView>(null);
+  // Once per launch: peek at chat and show "‹ Chat" at the edge.
+  const showHint = useSwipeHint("talk", pager, page, width);
   const focused = useIsFocused();
   const setVoicePageVisible = useListeningStore((state) => state.setVoicePageVisible);
 
@@ -58,6 +62,7 @@ export default function TalkScreen() {
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <ModeIndicator scrollX={scrollX} width={width} />
         <Animated.ScrollView
+          ref={pager}
           horizontal
           pagingEnabled
           bounces={false}
@@ -77,6 +82,7 @@ export default function TalkScreen() {
             <ChatPanel keyboardOffset={insets.top + MODE_INDICATOR_HEIGHT} />
           </View>
         </Animated.ScrollView>
+        <SwipeHint label="Chat" visible={showHint} />
       </SafeAreaView>
     </View>
   );

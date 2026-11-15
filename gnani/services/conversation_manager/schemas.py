@@ -11,7 +11,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
 
+from services.llm_providers import ModelName
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from services.idea_check.schemas import IdeaCheck, StandOutAngle
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +342,12 @@ class ConversationState(BaseModel):
     session_id: str
     status: ConversationStatus = ConversationStatus.CREATED
     preferred_language: str = "English"
+    # The language model this conversation thinks with: "qwen", "gemini" or "groq".
+    model_provider: str = "qwen"
+    # Idea Check, run with the first summary: similar projects, ways to stand
+    # out, feasibility. And the direction the student picked (None = as it is).
+    idea_check: Optional[IdeaCheck] = None
+    chosen_direction: Optional[StandOutAngle] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -537,6 +547,8 @@ class StartConversationRequest(BaseModel):
     # True when this user has already heard VEYA's full introduction:
     # VEYA then opens with a short greeting instead.
     returning_user: bool = False
+    # The language model VEYA thinks with for this conversation.
+    model: ModelName = "qwen"
 
     @field_validator("preferred_language")
     @classmethod
@@ -567,6 +579,8 @@ class ConversationTurnResponse(BaseModel):
     # True after the last fixed answer: VEYA said "Okay, got it..." and the
     # frontend should now call POST /conversation/{id}/summary.
     summary_pending: bool = False
+    # Shown with the summary: similar projects, ways to stand out, feasibility.
+    idea_check: Optional[IdeaCheck] = None
 
 
 class PublicMessage(BaseModel):
@@ -605,3 +619,11 @@ class GenerateImageResponse(BaseModel):
     session_id: str
     image_url: str
     filename: str
+
+
+class ConfirmConversationRequest(BaseModel):
+    """How to build: as it is, with one of Idea Check's angles, or the smaller version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    choice: Optional[str] = Field(default=None, pattern=r"^(as_is|smaller|angle:[0-2])$")

@@ -149,6 +149,28 @@ cp .env.example .env
 | `GNANI_BASE_URL` | `https://api.vachana.ai` | STT and TTS |
 | `GNANI_STT_ENDPOINT` | `/stt/v3` | STT (`prisma-v3.0`, `indic-auto`) |
 | `GNANI_TTS_ENDPOINT` | `/api/v1/tts/inference` | TTS (`timbre-v2.5`, voice `Nalini`) |
+| `GEMINI_API_KEY` | your Google AI Studio key | Gemini (optional) |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` (default, free tier) | Gemini |
+| `GROQ_API_KEY` | your Groq key (`gsk_...`) | Groq (optional) |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` (default, free tier) | Groq |
+
+**Idea Check.** With the first summary, VEYA checks the idea before planning
+([services/idea_check/](services/idea_check/)): it searches GitHub and Devpost
+for similar projects, suggests 2-3 ways to stand out, and judges whether the
+student can build it in time (with a smaller version if not). The student says
+"as it is", "the second one" or "the smaller version" (or taps a button in the
+app), and the plan is built around that choice. Links come from the search
+APIs, never from the model, and "nothing found" is never reported as "new".
+Optional: `GITHUB_TOKEN` (higher GitHub search limit), `VEYA_IDEA_CHECK=off`.
+
+**Qwen, Gemini or Groq.** With `GEMINI_API_KEY` or `GROQ_API_KEY` set, users
+can pick Gemini or Groq instead of the local Qwen for a voice conversation or
+chat (a switch on both screens). The same pipelines run on every model through
+the providers' OpenAI-compatible APIs ([llm_providers.py](services/llm_providers.py));
+the conversation remembers its model. Gemini and Groq also write the detailed
+Implementation Plan. Groq's free tier allows about 8,000 tokens a minute, so a
+request that hits it waits and retries. Without a key, choosing that model
+returns 503 with a clear message.
 
 ## Run the application
 
@@ -189,7 +211,7 @@ All endpoints use Pydantic request/response models. Errors always look like
 | `POST /conversation/{session_id}/confirm` | Confirm the summary and generate the project |
 | `POST /conversation/{session_id}/cancel` | Cancel the conversation |
 | `POST /conversation/{session_id}/generate-image` | Stable Diffusion concept image (only on request) |
-| `GET /projects` | Saved projects of the user in `X-Veya-User` |
+| `GET /projects` | Saved projects of the signed-in user |
 | `POST /projects` | Create a project from an idea written in the app (`title`, optional `sections`) |
 | `GET /projects/{project_id}` | One saved project: sections, plan, README, diagram, image |
 | `PATCH /projects/{project_id}` | Update `title` and/or individual `sections` |
@@ -199,8 +221,12 @@ All endpoints use Pydantic request/response models. Errors always look like
 | `GET /plan` | The user's plan (`free` / `paid`), its entitlements and projects used |
 
 `POST /conversation/{session_id}/confirm` now also saves the generated project
-and returns its `project_id`. A project belongs to the `X-Veya-User` header
-sent with `POST /conversation/start`.
+and returns its `project_id`. A project belongs to the user who started the
+conversation (see **Sign-in** below).
+
+The `curl` examples below leave out sign-in for readability. Add
+`-H "Authorization: Bearer <Clerk session token>"`, or for quick local tests
+run the server with `VEYA_AUTH=header` and send `-H "X-Veya-User: me"`.
 
 ### Start
 
@@ -334,7 +360,7 @@ any active status → cancelled          generating_project → error → (retry
 - Only one request per session runs at a time; a second one gets **409**
   (prevents double-clicked Confirm generating twice).
 - Session IDs are 43-character random tokens (`secrets.token_urlsafe(32)`).
-  They are not proof of identity; there is no login system.
+  A session can only be used by the user who started it; anyone else gets 404.
 - Sessions are kept in memory and saved to SQLite (the same file as saved
   projects, `VEYA_DB_PATH`). They expire after 2 hours without activity.
 
@@ -375,8 +401,8 @@ any active status → cancelled          generating_project → error → (retry
 
 `services/plans/plans.py` defines a `free` and a `paid` plan with their
 entitlements (`image_generation`, `max_projects`). A conversation's plan
-is decided once at `POST /conversation/start` from the `X-Veya-User`
-header (`PlanResolver`: `VEYA_DEFAULT_PLAN`, plus `VEYA_PAID_USERS` for
+is decided once at `POST /conversation/start` from the signed-in user
+(`PlanResolver`: `VEYA_DEFAULT_PLAN`, plus `VEYA_PAID_USERS` for
 testing). Limits are enforced on the conversation and project routes
 (HTTP 403), and `GET /plan` returns the user's plan. To launch real plans,
 replace `PlanResolver.plan_for()` with a lookup in your billing system.
@@ -412,11 +438,31 @@ The Expo app in the parent folder talks to this server over REST.
 Phone recordings are `.m4a` (AAC); web recordings are WebM/Opus. Both go
 through the existing ffmpeg conversion, so no frontend conversion is needed.
 
-**`X-Veya-User` is not authentication.** The app sends the signed-in Clerk
-user id so accounts on a shared device stay apart, but the server does not
-verify it — anyone who can reach the API can read any user's projects by
-sending their id. Before exposing this server beyond your own machine, verify
-Clerk session tokens (JWT) on the server instead.
+### Sign-in
+
+Every API request must carry the user's Clerk session token:
+`Authorization: Bearer <token>` (the app does this for you). The server
+checks Clerk's signature, the issuer and the expiry, and takes the user id
+from the token, so nobody can read or change another user's projects,
+conversations or chats. Requests without a valid token get **401**.
+
+The issuer is worked out from `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` in the
+shared `.env`, and Clerk's public keys are fetched once and cached. Optional
+settings (see `webapp/auth.py`):
+
+| Variable | Meaning |
+|---|---|
+| `VEYA_AUTH` | `clerk` (default) or `header`: development only, trusts `X-Veya-User` like older versions. Anyone can then act as any user. |
+| `CLERK_JWT_KEY` | Clerk's PEM public key (dashboard → API keys), to verify without fetching keys |
+| `CLERK_ISSUER` | Override the issuer derived from the publishable key |
+| `CLERK_AUTHORIZED_PARTIES` | Comma-separated web origins allowed in the token's `azp` |
+| `VEYA_ENABLE_TEST_PAGE` | `1` turns the old test page and its endpoints (`/`, `/greeting`, `/transcribe`, `/analyse`, `/generate-image`, `/readme`) back on. They have no sign-in check, so keep them off outside your own machine. |
+
+The server refuses to start when sign-in can't be checked (no publishable
+key and `VEYA_AUTH` not set to `header`), so it never runs open by accident.
+`GET /conversation/{id}/audio` is the one route without a token check:
+web audio players can't send headers, and the random session id in the URL
+already limits it to the conversation's owner.
 
 ## Known limitations
 

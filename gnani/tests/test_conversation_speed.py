@@ -34,7 +34,8 @@ def test_greeting_cache_is_per_language(service, fakes):
 
     assert len(fakes.tts.calls) == 2
     assert fakes.tts.calls[1]["language"] == "hi-IN"
-    assert hindi.message.startswith("[Hindi]")
+    # Fixed lines use the hand-written translation (services/language_layer/fixed_translations.py).
+    assert hindi.message.startswith("नमस्ते! मैं वेया हूँ।")
 
 
 def test_failed_greeting_audio_is_not_cached(service, fakes):

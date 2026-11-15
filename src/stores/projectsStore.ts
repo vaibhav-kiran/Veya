@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { describeApiError, isBackendConfigured, projectsApi } from "@/lib/veyaApi";
-import type { ProjectSummary, StoredProject, UpdateProjectRequest } from "@/types/api";
+import type { EditProjectRequest, EditProjectResponse, ProjectSummary, StoredProject, UpdateProjectRequest } from "@/types/api";
 
 /**
  * In-memory cache of the signed-in user's projects. The backend is the
@@ -21,6 +21,9 @@ type ProjectsState = {
   update: (projectId: string, body: UpdateProjectRequest) => Promise<StoredProject>;
   remove: (projectId: string) => Promise<void>;
   generateImage: (projectId: string) => Promise<StoredProject>;
+  /** Change the plan by voice or text; the saved project is updated. */
+  editPlan: (projectId: string, body: EditProjectRequest) => Promise<EditProjectResponse>;
+  undoPlanEdit: (projectId: string) => Promise<StoredProject>;
   /** Called when the signed-in account changes. */
   reset: () => void;
 };
@@ -101,6 +104,18 @@ export const useProjectsStore = create<ProjectsState>()((set, get) => {
     generateImage: async (projectId) => {
       await projectsApi.generateProjectImage(projectId);
       return get().load(projectId);
+    },
+
+    editPlan: async (projectId, body) => {
+      const result = await projectsApi.editProject(projectId, body);
+      store(result.project);
+      return result;
+    },
+
+    undoPlanEdit: async (projectId) => {
+      const project = await projectsApi.undoProjectEdit(projectId);
+      store(project);
+      return project;
     },
 
     reset: () => {

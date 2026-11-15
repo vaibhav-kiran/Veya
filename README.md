@@ -133,16 +133,11 @@ uv sync
 uv run uvicorn webapp.app:app --host 0.0.0.0 --port 8000
 ```
 
-### 3. Run the idea engine (for the Innovator tab)
+### 3. The idea engine (Innovator tab) starts with the backend
 
-```bash
-cd veya-idea-engine
-cp .env.example .env
-uv sync
-uv run uvicorn app.main:app --port 8100
-```
+Nothing extra to run: the backend imports `veya-idea-engine/` and starts it when it starts ("Idea engine started inside the backend" in the log). Its settings go in `veya-idea-engine/.env` (copy `.env.example`); it shares the backend's Ollama. Web search needs a `TAVILY_API_KEY`; GitHub and paper search work without keys but are rate limited. See [veya-idea-engine/README.md](veya-idea-engine/README.md).
 
-The backend finds it at `http://localhost:8100` (change with `IDEA_ENGINE_URL`). Web search needs a `TAVILY_API_KEY`; GitHub and paper search work without keys but are rate limited. See [veya-idea-engine/README.md](veya-idea-engine/README.md).
+To use a separately running engine instead, set `IDEA_ENGINE_URL` (for example `http://localhost:8100`).
 
 ### 4. Run the app
 
@@ -166,7 +161,6 @@ npx expo lint
 
 ## What's next
 
-- Verify sign-in on the server so each user's projects are properly private.
 - Let people interrupt Veya by talking, instead of waiting for the reply to finish.
 
 ## License

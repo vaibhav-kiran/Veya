@@ -7,15 +7,15 @@ import { AppText } from "@/components/AppText";
 import { Button } from "@/components/Button";
 import { FilterChips } from "@/components/FilterChips";
 import { FormMessage } from "@/components/FormMessage";
-import { GlassCard } from "@/components/GlassCard";
-import { Icon, type IconName } from "@/components/Icon";
+import { Icon } from "@/components/Icon";
 import { IdeaResultCard } from "@/components/innovator/IdeaResultCard";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ScreenBackground } from "@/components/ScreenBackground";
-import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
+import { GROUP_BG, Group, HAIRLINE, SectionHeader, TABULAR } from "@/components/ui/Grouped";
 import { haptics } from "@/lib/haptics";
 import { canStart, isResearching, useInnovatorStore } from "@/stores/innovatorStore";
-import { colors, fontFamilies, radii, screenGutter, spacing, themed } from "@/theme";
+import { colors, fontFamilies, screenGutter, spacing } from "@/theme";
 import type { InnovatorProjectType } from "@/types/innovator";
 
 const POLL_MS = 4000;
@@ -31,16 +31,16 @@ const PROJECT_TYPES: readonly { value: InnovatorProjectType | "any"; label: stri
 ];
 
 /** What the server is doing, in words a student understands. */
-const STAGES: { key: string; label: string; icon: IconName }[] = [
-  { key: "planning", label: "Planning the research", icon: "list" },
-  { key: "problem_discovery", label: "Finding real problems", icon: "target" },
-  { key: "solution_research", label: "Checking what already exists", icon: "build" },
-  { key: "gap_analysis", label: "Testing the gaps", icon: "flag" },
-  { key: "candidate_generation", label: "Drafting ideas", icon: "idea" },
-  { key: "feasibility", label: "Checking it fits your budget and time", icon: "clock" },
-  { key: "similarity", label: "Comparing with similar work", icon: "people" },
-  { key: "critic", label: "Letting a critic tear them apart", icon: "warning" },
-  { key: "ranking", label: "Ranking", icon: "star" },
+const STAGES: { key: string; label: string }[] = [
+  { key: "planning", label: "Planning the research" },
+  { key: "problem_discovery", label: "Finding real problems" },
+  { key: "solution_research", label: "Checking what already exists" },
+  { key: "gap_analysis", label: "Testing the gaps" },
+  { key: "candidate_generation", label: "Drafting ideas" },
+  { key: "feasibility", label: "Checking it fits your budget and time" },
+  { key: "similarity", label: "Comparing with similar work" },
+  { key: "critic", label: "Letting a critic tear them apart" },
+  { key: "ranking", label: "Ranking" },
 ];
 
 function ProfileForm() {
@@ -52,7 +52,8 @@ function ProfileForm() {
   const ready = canStart(form);
 
   return (
-    <GlassCard style={styles.formCard}>
+    <View style={styles.formCard}>
+      <SectionHeader title="About you" />
       <TextField
         label="What are you into?"
         placeholder="e.g. agriculture, IoT, mental health"
@@ -74,6 +75,7 @@ function ProfileForm() {
         onChangeText={(academicLevel) => setForm({ academicLevel })}
         maxLength={100}
       />
+      <SectionHeader title="What you have" />
       <TextField
         label="Skills you have"
         placeholder="e.g. Python, Arduino, React"
@@ -104,9 +106,7 @@ function ProfileForm() {
         onChangeText={(teamSize) => setForm({ teamSize: teamSize.replace(/[^0-9]/g, "").slice(0, 2) })}
       />
       <View style={styles.typeBlock}>
-        <AppText variant="bodySmall" tone="secondary" style={styles.typeLabel}>
-          Kind of project
-        </AppText>
+        <SectionHeader title="Kind of project" />
         <FilterChips
           options={PROJECT_TYPES}
           value={form.projectType ?? "any"}
@@ -114,11 +114,13 @@ function ProfileForm() {
         />
       </View>
 
+      {/* The research runs on this model (the same switch as Talk and Chat). */}
+      <ModelPicker activeModel={null} />
+
       {/* Shown here too: the header message is scrolled out of view when the button is tapped. */}
       <FormMessage message={error} />
       <Button
         label="Find ideas"
-        icon="sparkle"
         size="large"
         loading={starting}
         disabled={!ready}
@@ -131,72 +133,80 @@ function ProfileForm() {
       <AppText variant="caption" tone="muted" align="center">
         {ready ? "Takes about 5–10 minutes. You can leave this tab, it keeps going." : "Add an interest or your field of study to start."}
       </AppText>
-    </GlassCard>
+    </View>
   );
 }
 
 function ResearchProgress() {
   const status = useInnovatorStore((state) => state.status);
   const newSearch = useInnovatorStore((state) => state.newSearch);
+  const model = useInnovatorStore((state) => state.model);
   const progress = Math.min(1, Math.max(0.03, status?.progress ?? 0));
   const current = STAGES.findIndex((stage) => stage.key === status?.stage);
   const counts = status?.counts ?? {};
 
   return (
-    <GlassCard style={styles.progressCard}>
-      <View style={styles.progressHead}>
-        <View style={styles.pulse}>
-          <Icon name="brain" size={22} color={colors.veya.lavender} />
-        </View>
-        <View style={styles.flex}>
-          <AppText variant="h4">{current >= 0 ? STAGES[current].label : "Getting started"}…</AppText>
-          <AppText variant="caption" tone="muted">
-            {Math.round(progress * 100)}% · research keeps running if you leave
+    <View style={styles.progressCard}>
+      <Group>
+        <View style={styles.progressHead}>
+          <View style={styles.pulse} />
+          <View style={styles.flex}>
+            <AppText variant="bodyMedium" style={styles.strong}>
+              {current >= 0 ? STAGES[current].label : "Getting started"}
+            </AppText>
+            <AppText variant="caption" tone="muted">
+              Keeps running if you leave this tab
+            </AppText>
+          </View>
+          <AppText variant="bodyMedium" style={[styles.strong, TABULAR]}>
+            {Math.round(progress * 100)}%
           </AppText>
         </View>
-      </View>
+        <View style={styles.track} accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+          <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+        </View>
+      </Group>
 
-      <View style={styles.track} accessible accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
-        <View style={[styles.fill, { width: `${progress * 100}%` }]} />
-      </View>
-
-      <View style={styles.steps}>
+      <SectionHeader title="Steps" />
+      <Group>
         {STAGES.map((stage, index) => {
           const done = current > index;
           const active = current === index;
           return (
             <View key={stage.key} style={styles.step}>
-              <Icon
-                name={done ? "checkCircle" : stage.icon}
-                size={15}
-                color={done ? colors.semantic.success : active ? colors.veya.lavender : colors.text.muted}
-              />
-              <AppText variant="bodySmall" tone={active ? "primary" : done ? "secondary" : "muted"} style={active && styles.activeStep}>
+              {done ? (
+                <Icon name="check" size={13} color={colors.text.secondary} />
+              ) : (
+                <View style={[styles.stepDot, active && styles.stepDotActive]} />
+              )}
+              <AppText variant="bodySmall" tone={active ? "primary" : done ? "secondary" : "muted"} style={active && styles.strong}>
                 {stage.label}
               </AppText>
             </View>
           );
         })}
-      </View>
+      </Group>
 
-      <View style={styles.counts}>
+      <SectionHeader title="Found so far" />
+      <View style={styles.stats}>
         {[
           ["Problems", counts.problems ?? 0],
           ["Existing", counts.existing_solutions ?? 0],
           ["Gaps", counts.gaps ?? 0],
           ["Ideas", counts.candidate_ideas ?? 0],
-        ].map(([label, value]) => (
-          <View key={label} style={styles.count}>
-            <AppText style={styles.countValue}>{value}</AppText>
-            <AppText variant="caption" tone="secondary">
+        ].map(([label, value], index) => (
+          <View key={label} style={[styles.stat, index > 0 && styles.statDivider]}>
+            <AppText style={[styles.statValue, TABULAR]}>{value}</AppText>
+            <AppText variant="caption" tone="muted">
               {label}
             </AppText>
           </View>
         ))}
       </View>
 
+      {model ? <ModelPicker activeModel={model} /> : null}
       <Button label="Cancel and start over" variant="ghost" size="small" onPress={newSearch} />
-    </GlassCard>
+    </View>
   );
 }
 
@@ -217,15 +227,15 @@ function Results() {
 
   return (
     <View style={styles.results}>
-      <View style={styles.summary}>
+      <View style={styles.stats}>
         {[
-          [String(results.problems.length), "problems studied"],
-          [String(results.evidence.length), "sources read"],
-          [String(ideas.length), ideas.length === 1 ? "idea passed" : "ideas passed"],
-        ].map(([value, label]) => (
-          <View key={label} style={styles.summaryItem}>
-            <AppText style={styles.summaryValue}>{value}</AppText>
-            <AppText variant="caption" tone="secondary" align="center">
+          [String(results.problems.length), "Problems studied"],
+          [String(results.evidence.length), "Sources read"],
+          [String(ideas.length), ideas.length === 1 ? "Idea passed" : "Ideas passed"],
+        ].map(([value, label], index) => (
+          <View key={label} style={[styles.stat, index > 0 && styles.statDivider]}>
+            <AppText style={[styles.statValue, TABULAR]}>{value}</AppText>
+            <AppText variant="caption" tone="muted" align="center">
               {label}
             </AppText>
           </View>
@@ -238,9 +248,8 @@ function Results() {
 
       {ideas.length === 0 ? (
         <>
-          <GlassCard style={styles.emptyCard}>
-            <Icon name="target" size={22} color={colors.veya.lavender} />
-            <AppText variant="h4" align="center">
+          <View style={styles.emptyCard}>
+            <AppText variant="h4" align="center" style={styles.strong}>
               No idea passed every check
             </AppText>
             <AppText variant="bodySmall" tone="secondary" align="center">
@@ -248,7 +257,7 @@ function Results() {
               {nearMisses.length ? "Here are the closest ones and what held them back. Refine one, or" : "Try"} broader interests or a longer
               deadline.
             </AppText>
-          </GlassCard>
+          </View>
           {nearMisses.map((evaluated) => (
             <IdeaResultCard key={evaluated.idea.idea_id} evaluated={evaluated} rank={0} />
           ))}
@@ -258,14 +267,14 @@ function Results() {
       )}
 
       {ideas.length > 0 && results.rejected_ideas.length ? (
-        <GlassCard style={styles.rejected}>
+        <View style={styles.rejected}>
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ expanded: showRejected }}
             onPress={() => setShowRejected((value) => !value)}
             style={styles.rejectedHead}
           >
-            <AppText variant="h4" style={styles.flex}>
+            <AppText variant="bodyMedium" style={[styles.flex, styles.strong]}>
               Didn&apos;t make it ({results.rejected_ideas.length})
             </AppText>
             <Icon name="chevronDown" size={16} color={colors.text.secondary} style={showRejected && styles.flip} />
@@ -282,17 +291,15 @@ function Results() {
                 </View>
               ))
             : null}
-        </GlassCard>
+        </View>
       ) : null}
 
       {notes.length ? (
         <View style={styles.notes}>
-          <AppText variant="eyebrow" tone="secondary">
-            Worth knowing
-          </AppText>
+          <SectionHeader title="Worth knowing" />
           {notes.map((note) => (
             <AppText key={note} variant="caption" tone="muted">
-              •  {note}
+              {note}
             </AppText>
           ))}
         </View>
@@ -330,15 +337,21 @@ export default function InnovatorScreen() {
   const showForm = !sessionId || (failedEarly && !results);
 
   return (
-    <ScreenBackground glow="top">
+    <ScreenBackground>
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <ScreenHeader
-              eyebrow="Innovator"
-              title="Find an idea worth building."
-              subtitle="Veya researches real problems and what already exists, then suggests ideas you can back with sources."
-            />
+            <View style={styles.header}>
+              <AppText variant="bodySmall" tone="secondary">
+                Innovator
+              </AppText>
+              <AppText style={styles.title} accessibilityRole="header">
+                Find an idea worth building.
+              </AppText>
+              <AppText variant="bodyMedium" tone="muted">
+                Veya researches real problems and what already exists, then suggests ideas you can back with sources.
+              </AppText>
+            </View>
 
             {showForm ? null : <FormMessage message={error} />}
 
@@ -353,54 +366,52 @@ export default function InnovatorScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   flex: { flex: 1 },
-  content: { paddingHorizontal: screenGutter, paddingTop: spacing[4], paddingBottom: spacing[12], gap: spacing[5] },
-  formCard: { gap: spacing[4] },
+  strong: { fontFamily: fontFamilies.medium, color: colors.text.primary },
+  content: { paddingHorizontal: screenGutter, paddingTop: spacing[4], paddingBottom: spacing[12], gap: spacing[3] },
+  header: { gap: spacing[2], marginBottom: spacing[2] },
+  title: { fontFamily: fontFamilies.bold, fontSize: 30, lineHeight: 35, letterSpacing: -0.6, color: colors.text.primary },
+  formCard: { gap: spacing[3] },
   row: { flexDirection: "row", gap: spacing[3] },
   rowItem: { flex: 1 },
-  typeBlock: { gap: spacing[2] },
-  typeLabel: { fontFamily: fontFamilies.medium },
-  progressCard: { gap: spacing[4] },
-  progressHead: { flexDirection: "row", alignItems: "center", gap: spacing[3] },
-  pulse: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.overlay.lavenderSoft,
-    boxShadow: themed("0px 0px 24px rgba(167, 139, 250, 0.45)"),
+  typeBlock: { gap: spacing[1] },
+  progressCard: { gap: 0 },
+  progressHead: { flexDirection: "row", alignItems: "center", gap: spacing[3], padding: spacing[4] },
+  pulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.veya.lavender },
+  track: { height: 2, backgroundColor: HAIRLINE, overflow: "hidden" },
+  fill: { height: 2, backgroundColor: colors.veya.lavender },
+  step: { flexDirection: "row", alignItems: "center", gap: spacing[3], paddingHorizontal: spacing[4], minHeight: 44 },
+  stepDot: { width: 6, height: 6, borderRadius: 3, marginHorizontal: 3.5, backgroundColor: HAIRLINE },
+  stepDotActive: { backgroundColor: colors.veya.lavender },
+  stats: {
+    flexDirection: "row",
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: HAIRLINE,
+    backgroundColor: GROUP_BG,
   },
-  track: { height: 8, borderRadius: 4, backgroundColor: colors.overlay.lavenderSoft, overflow: "hidden" },
-  fill: { height: 8, borderRadius: 4, backgroundImage: `linear-gradient(90deg, ${colors.veya.purple} 0%, ${colors.veya.lavender} 100%)` },
-  steps: { gap: spacing[2] },
-  step: { flexDirection: "row", alignItems: "center", gap: spacing[2] },
-  activeStep: { fontFamily: fontFamilies.semibold },
-  counts: { flexDirection: "row", gap: spacing[2] },
-  count: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: spacing[3],
-    borderRadius: radii.lg,
-    backgroundColor: colors.overlay.lavenderSoft,
-  },
-  countValue: { fontFamily: fontFamilies.bold, fontSize: 18, lineHeight: 24, color: colors.text.primary },
+  stat: { flex: 1, alignItems: "center", gap: 2, paddingVertical: spacing[4], paddingHorizontal: spacing[1] },
+  statDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: HAIRLINE },
+  statValue: { fontFamily: fontFamilies.semibold, fontSize: 20, lineHeight: 26, color: colors.text.primary },
   results: { gap: spacing[4] },
-  summary: { flexDirection: "row", gap: spacing[2] },
-  summaryItem: {
-    flex: 1,
+  emptyCard: {
     alignItems: "center",
-    paddingVertical: spacing[3],
-    paddingHorizontal: spacing[1],
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.16)"),
-    backgroundColor: colors.overlay.surfaceGlass,
+    gap: spacing[2],
+    padding: spacing[5],
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: HAIRLINE,
+    backgroundColor: GROUP_BG,
   },
-  summaryValue: { fontFamily: fontFamilies.bold, fontSize: 20, lineHeight: 26, color: colors.veya.lavender },
-  emptyCard: { alignItems: "center", gap: spacing[2] },
-  rejected: { gap: spacing[3] },
+  rejected: {
+    gap: spacing[3],
+    padding: spacing[4],
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: HAIRLINE,
+    backgroundColor: GROUP_BG,
+  },
   rejectedHead: { flexDirection: "row", alignItems: "center", minHeight: 32 },
   flip: { transform: [{ rotate: "180deg" }] },
-  rejectedItem: { gap: 2, paddingTop: spacing[2], borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.overlay.borderStrong },
-  notes: { gap: 4 },
+  rejectedItem: { gap: 2, paddingTop: spacing[2], borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIRLINE },
+  notes: { gap: 6 },
 });

@@ -20,6 +20,7 @@ objects that are passed in. It does not talk to any API directly.
 """
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import tempfile
 from contextlib import asynccontextmanager
@@ -28,16 +29,22 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 import httpx
 
-from services.conversation_manager.conversation_pipeline import ConversationPipeline
+from services.conversation_manager.conversation_pipeline import (
+    SUMMARY_SHOWN_STATUSES,
+    ConversationPipeline,
+    confirmation_decision,
+    is_plain_confirmation,
+)
 from services.conversation_manager.conversation_prompts import (
     FIXED_QUESTIONS,
     GOT_IT_MESSAGE,
     fixed_questions_for,
 )
 from services.conversation_manager.conversation_state import ConversationStore
-from services.conversation_manager.conversation_summary import build_confirmation_summary
+from services.conversation_manager.conversation_summary import SUMMARY_CLOSING, build_confirmation_summary
 from services.conversation_manager.errors import (
     ConversationBusyError,
+    ConversationNotFoundError,
     PlanLimitError,
     EmptyTranscriptError,
     ImageGenerationError,
@@ -46,14 +53,18 @@ from services.conversation_manager.errors import (
     LanguageModelError,
     ProjectGenerationError,
     SpeechRecognitionError,
+    ModelUnavailableError,
 )
 from services.conversation_manager.project_generation import ProjectGenerator
+from services.idea_check.checker import chosen_direction, idea_text, parse_choice, speech_for
+from services.llm_providers import QWEN, model_unavailable_message
 from services.conversation_manager.schemas import (
     SUPPORTED_OUTPUT_LANGUAGES,
     CancelConversationResponse,
     ConfirmConversationResponse,
     ConversationAction,
     ConversationMessage,
+    ConversationDecision,
     ConversationState,
     ConversationStateResponse,
     ConversationStatus,
@@ -106,6 +117,17 @@ def stt_language_hint(preferred_language: str) -> str:
     return f"{code},en-IN"
 
 
+@dataclass
+class ModelPipelines:
+    """Everything that calls a language model, for one model (Qwen, Gemini or Groq)."""
+
+    language: Any
+    conversation: Any
+    project_generator: Any
+    # Idea Check (None = skipped, e.g. in tests or when disabled).
+    idea_checker: Any = None
+
+
 class ConversationService:
 
     def __init__(
@@ -120,6 +142,8 @@ class ConversationService:
         tts_voice: str = "Nalini",
         project_repository: Optional["ProjectRepository"] = None,
         plan_resolver: Optional[PlanResolver] = None,
+        other_models: Optional[dict[str, ModelPipelines]] = None,
+        idea_checker: Any = None,
     ):
         self.store = store
         self.stt_pipeline = stt_pipeline
@@ -131,6 +155,11 @@ class ConversationService:
         self.tts_voice = tts_voice
         self.project_repository = project_repository
         self.plan_resolver = plan_resolver or PlanResolver()
+        # The model each conversation thinks with, chosen by the user (Qwen by default).
+        self.models: dict[str, ModelPipelines] = {
+            QWEN: ModelPipelines(language_pipeline, conversation_pipeline, project_generator, idea_checker),
+            **(other_models or {}),
+        }
 
         # The fixed lines (the three questions and "Okay, got it") are the
         # same for everyone, so their translated text and audio are made
@@ -147,9 +176,12 @@ class ConversationService:
         preferred_language: str = "English",
         owner_id: Optional[str] = None,
         returning_user: bool = False,
+        model: str = QWEN,
     ) -> ConversationTurnResponse:
+        self._check_model_available(model)
         state = self.store.create_conversation(preferred_language)
         state.owner_id = owner_id
+        state.model_provider = model
         state.plan = self.plan_resolver.plan_for(owner_id).value
         self.store.set_status(state.session_id, ConversationStatus.COLLECTING_INFORMATION)
 
@@ -220,11 +252,9 @@ class ConversationService:
             )
 
         # ---- phase 3: after the summary (corrections, "yes", questions) ----
-        english_text = await self._to_english(user_text, detected_language)
+        english_text = await self._to_english(user_text, detected_language, state.model_provider)
 
-        decision = await asyncio.to_thread(
-            self.conversation_pipeline.decide_next_step, state, english_text
-        )
+        decision = await self._decide(state, english_text)
 
         # The user may have pressed Cancel while Qwen was thinking.
         if state.status == ConversationStatus.CANCELLED:
@@ -241,9 +271,10 @@ class ConversationService:
             ),
         )
 
-        action, english_reply = self.conversation_pipeline.apply_decision(self.store, session_id, decision)
+        action, english_reply = self._models(state).conversation.apply_decision(self.store, session_id, decision)
+        english_reply = await self._add_idea_check(state, action, english_reply)
 
-        reply_text = await self._translate_for_user(english_reply, state.preferred_language)
+        reply_text = await self._translate_for_user(english_reply, state.preferred_language, state.model_provider)
         self.store.add_message(
             session_id,
             ConversationMessage(
@@ -344,11 +375,11 @@ class ConversationService:
             # for every other answer. English voice answers are skipped.
             questions_and_answers = []
             for fixed_answer in state.fixed_answers:
-                english_answer = await self._to_english(fixed_answer.answer, fixed_answer.language)
+                english_answer = await self._to_english(fixed_answer.answer, fixed_answer.language, state.model_provider)
                 questions_and_answers.append((fixed_answer.question, english_answer))
 
             extraction = await asyncio.to_thread(
-                self.conversation_pipeline.extract_project_details, questions_and_answers
+                self._models(state).conversation.extract_project_details, questions_and_answers
             )
 
             # The user may have pressed Cancel while Qwen was thinking.
@@ -372,8 +403,8 @@ class ConversationService:
             self.store.mark_initial_summary_done(session_id)
             self.store.set_status(session_id, ConversationStatus.AWAITING_CONFIRMATION)
 
-            english_summary = build_confirmation_summary(state)
-            summary_text = await self._translate_for_user(english_summary, state.preferred_language)
+            english_summary = await self._summary_with_idea_check(state)
+            summary_text = await self._translate_for_user(english_summary, state.preferred_language, state.model_provider)
             self.store.add_message(
                 session_id,
                 ConversationMessage(
@@ -420,6 +451,14 @@ class ConversationService:
             last_error=state.last_error,
         )
 
+    def ensure_owner(self, session_id: str, user_id: Optional[str]) -> None:
+        """
+        Only the user who started a conversation may use it. Anyone else is
+        told it doesn't exist, so session ids of other users can't be probed.
+        """
+        if self.store.get_conversation(session_id).owner_id != user_id:
+            raise ConversationNotFoundError()
+
     def get_latest_audio(self, session_id: str) -> Optional[bytes]:
         return self.store.get_conversation(session_id).latest_audio
 
@@ -427,9 +466,13 @@ class ConversationService:
     # CONFIRM AND GENERATE
     # =====================================================
 
-    async def confirm_and_generate(self, session_id: str) -> ConfirmConversationResponse:
+    async def confirm_and_generate(self, session_id: str, choice: Optional[str] = None) -> ConfirmConversationResponse:
+        """`choice`: "as_is", "smaller" or "angle:N" from Idea Check (None keeps an earlier spoken choice)."""
+
         async with self._exclusive_access(session_id):
             state = self.store.get_conversation(session_id)
+            if choice is not None and state.idea_check is not None and state.status != ConversationStatus.COMPLETED:
+                state.chosen_direction = chosen_direction(state.idea_check, choice)
 
             # A second Confirm after success returns the same result
             # instead of generating the project again.
@@ -459,7 +502,7 @@ class ConversationService:
             state.last_error = None
 
             try:
-                result, visual_input = await asyncio.to_thread(self.project_generator.generate, state)
+                result, visual_input = await self._generate_with_retry(state)
             except Exception as error:
                 logger.exception("Project generation failed for conversation %s...", session_id[:8])
                 state.last_error = ProjectGenerationError.user_message
@@ -470,7 +513,7 @@ class ConversationService:
             if state.status == ConversationStatus.CANCELLED:
                 raise InvalidConversationStateError("This conversation was cancelled during generation.")
 
-            result.response = await self._translate_for_user(result.response, state.preferred_language)
+            result.response = await self._translate_for_user(result.response, state.preferred_language, state.model_provider)
 
             state.generation_result = result
             state.visual_generation_input = visual_input
@@ -686,19 +729,93 @@ class ConversationService:
 
         return transcript, result.get("language")
 
-    async def _to_english(self, text: str, detected_language: Optional[str]) -> str:
+    async def _summary_with_idea_check(self, state: ConversationState) -> str:
+        """
+        The summary, followed by Idea Check the first time (or when the idea
+        itself changed). Idea Check never blocks the conversation: if it
+        fails, VEYA just reads the summary.
+        """
+
+        summary = build_confirmation_summary(state)
+        checker = self._models(state).idea_checker
+        if checker is None:
+            return summary
+        without_closing = summary.removesuffix(SUMMARY_CLOSING).rstrip()
+
+        details = state.project_details.model_dump()
+        if state.idea_check is not None and state.idea_check.idea == idea_text(details):
+            if state.idea_check.angles:
+                return f"{without_closing} Shall I build it as it is, or with one of the ideas I suggested?"
+            return summary
+
+        try:
+            state.idea_check = await asyncio.to_thread(checker.check, details)
+            state.chosen_direction = None
+        except Exception as error:
+            logger.warning("Idea Check failed (%s); reading the summary without it.", type(error).__name__)
+            return summary
+        return f"{without_closing} {speech_for(state.idea_check)}"
+
+    async def _add_idea_check(self, state: ConversationState, action: ConversationAction, english_reply: str) -> str:
+        """When a turn produced the full summary, add Idea Check to it."""
+
+        if action == ConversationAction.REQUEST_CONFIRMATION and english_reply == build_confirmation_summary(state):
+            return await self._summary_with_idea_check(state)
+        return english_reply
+
+    async def _generate_with_retry(self, state: ConversationState):
+        """Generate the project; try once more if it fails (a busy free model, or malformed JSON)."""
+
+        generator = self._models(state).project_generator
+        try:
+            return await asyncio.to_thread(generator.generate, state)
+        except Exception as error:
+            if state.status == ConversationStatus.CANCELLED:
+                raise
+            logger.warning("Project generation failed (%s); trying once more.", type(error).__name__)
+            return await asyncio.to_thread(generator.generate, state)
+
+    async def _decide(self, state: ConversationState, english_text: str) -> ConversationDecision:
+        """The next step: a plain "yes" to the summary builds the project; anything else goes to the model."""
+
+        if state.status in SUMMARY_SHOWN_STATUSES and state.idea_check is not None:
+            choice = parse_choice(english_text, state.idea_check)
+            if choice:
+                logger.info("Idea Check choice after the summary: %s", choice)
+                state.chosen_direction = chosen_direction(state.idea_check, choice)
+                return confirmation_decision()
+        if state.status in SUMMARY_SHOWN_STATUSES and is_plain_confirmation(english_text):
+            logger.info("Plain confirmation after the summary: building the project.")
+            return confirmation_decision()
+        return await asyncio.to_thread(self._models(state).conversation.decide_next_step, state, english_text)
+
+    def available_models(self) -> list[str]:
+        return list(self.models)
+
+    def _check_model_available(self, model: str) -> None:
+        if model not in self.models:
+            raise ModelUnavailableError(model_unavailable_message(model))
+
+    def _model_pipelines(self, model: str) -> ModelPipelines:
+        return self.models.get(model) or self.models[QWEN]
+
+    def _models(self, state: ConversationState) -> ModelPipelines:
+        """The pipelines for the model this conversation uses."""
+        return self._model_pipelines(state.model_provider)
+
+    async def _to_english(self, text: str, detected_language: Optional[str], model: str = QWEN) -> str:
         """Use the existing Language Layer to normalise the answer to English."""
 
         if detected_language and detected_language.lower().startswith("en"):
             return text
 
         try:
-            return await asyncio.to_thread(self.language_pipeline.normalize_input, text)
+            return await asyncio.to_thread(self._model_pipelines(model).language.normalize_input, text)
         except Exception as error:
             logger.error("Input normalisation failed: %s", type(error).__name__)
             raise LanguageModelError() from error
 
-    async def _translate_for_user(self, english_text: str, preferred_language: str) -> str:
+    async def _translate_for_user(self, english_text: str, preferred_language: str, model: str = QWEN) -> str:
         """
         Translate VEYA's reply with the existing Language Layer.
         If translation fails, the English text is used instead.
@@ -707,9 +824,18 @@ class ConversationService:
         if not english_text or preferred_language.strip().lower() in ENGLISH_NAMES:
             return english_text
 
+        # VEYA's fixed lines have hand-written translations; the local model
+        # translates Indian languages badly. (Imported here: the module
+        # imports the chat prompts, which import this package.)
+        from services.language_layer.fixed_translations import fixed_translation
+
+        known = fixed_translation(english_text, preferred_language)
+        if known:
+            return known
+
         try:
             translated = await asyncio.to_thread(
-                self.language_pipeline.translate_response,
+                self._model_pipelines(model).language.translate_response,
                 {"response": english_text},
                 preferred_language,
             )
@@ -742,7 +868,7 @@ class ConversationService:
             state.latest_audio = line_audio
             audio_error = None
         else:
-            line_text = await self._translate_for_user(english_text, state.preferred_language)
+            line_text = await self._translate_for_user(english_text, state.preferred_language, state.model_provider)
             audio_error = await self._speak(state, line_text)
             # Cache only a complete success, so a failure is retried next time.
             if state.latest_audio is not None:
@@ -820,4 +946,5 @@ class ConversationService:
             audio_error=audio_error,
             project_details=state.project_details,
             skipped_fields=state.skipped_fields,
+            idea_check=state.idea_check,
         )

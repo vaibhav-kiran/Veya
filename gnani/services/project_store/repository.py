@@ -5,9 +5,8 @@ Uses Python's built-in sqlite3, so no extra dependency is needed.
 Each project is stored as one JSON document, plus the columns needed
 to list and filter projects.
 
-Projects are scoped by owner_id, the user id the app sends in the
-X-Veya-User header. This keeps accounts apart on a shared device but is
-NOT authentication: anyone who can reach the API can send any header.
+Projects are scoped by owner_id: the signed-in user's id, taken from the verified Clerk session token (see
+webapp/auth.py).
 """
 
 import json
@@ -99,6 +98,7 @@ def _stored_json(project: StoredProject) -> str:
 
     data = json.loads(project.model_dump_json(exclude={"timeline"}))
     data["deadline_resolved"] = project.deadline_resolved
+    data["previous_readme_markdown"] = project.previous_readme_markdown
     return json.dumps(data)
 
 
@@ -235,6 +235,25 @@ class ProjectRepository:
             project.sections = project.sections.model_copy(update=sections.model_dump(exclude_none=True))
         if image_url is not None:
             project.image_url = image_url
+        project.updated_at = utc_now()
+        return with_timeline(self._write(project))
+
+    def set_readme(self, owner_id: Optional[str], project_id: str, markdown: str) -> StoredProject:
+        """Save a changed README, keeping the one before it for undo."""
+        project = self.get(owner_id, project_id)
+        project.previous_readme_markdown = project.readme_markdown
+        project.readme_markdown = markdown
+        project.can_undo_edit = True
+        project.updated_at = utc_now()
+        return with_timeline(self._write(project))
+
+    def undo_readme(self, owner_id: Optional[str], project_id: str) -> StoredProject:
+        """Put back the README from before the last change (once)."""
+        project = self.get(owner_id, project_id)
+        if project.previous_readme_markdown is not None:
+            project.readme_markdown = project.previous_readme_markdown
+        project.previous_readme_markdown = None
+        project.can_undo_edit = False
         project.updated_at = utc_now()
         return with_timeline(self._write(project))
 

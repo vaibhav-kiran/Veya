@@ -36,7 +36,7 @@ export function CollapsibleSection({ title, icon, content, placeholder, initiall
         }}
         style={styles.header}
       >
-        <Icon name={icon} size={18} color={hasContent ? colors.veya.lavender : colors.text.muted} />
+        <Icon name={icon} size={16} color={hasContent ? colors.text.secondary : colors.text.muted} />
         <View style={styles.headerText}>
           <AppText variant="h4">{title}</AppText>
           {!open ? (
@@ -54,7 +54,7 @@ export function CollapsibleSection({ title, icon, content, placeholder, initiall
           </AppText>
           {onEdit ? (
             <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${title}`} onPress={onEdit} hitSlop={8} style={styles.edit}>
-              <Icon name="edit" size={13} color={colors.veya.lavender} />
+              <Icon name="edit" size={13} color={colors.text.secondary} />
               <AppText variant="bodySmall" tone="accent">
                 {hasContent ? "Edit" : "Write it"}
               </AppText>

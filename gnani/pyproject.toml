@@ -15,6 +15,7 @@ dependencies = [
     "openai>=3.42.0",
     "pillow>=13.0.0",
     "pydantic>=2.14.2",
+    "pyjwt[crypto]>=2.10",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
     "safetensors>=0.8.0",

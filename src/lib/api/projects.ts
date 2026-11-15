@@ -1,5 +1,7 @@
 import type {
   CreateProjectRequest,
+  EditProjectRequest,
+  EditProjectResponse,
   ProjectImageResponse,
   ProjectListResponse,
   StoredProject,
@@ -7,6 +9,9 @@ import type {
 } from "@/types/api";
 
 import { apiRequest, apiRequestText, apiUrl } from "./client";
+
+/** The model rewrites whole sections of a long plan: give it time. */
+const EDIT_TIMEOUT_MS = 5 * 60_000;
 
 /** Stable Diffusion on a laptop can take minutes. */
 const IMAGE_TIMEOUT_MS = 10 * 60_000;
@@ -31,6 +36,16 @@ export function updateProject(projectId: string, body: UpdateProjectRequest): Pr
 
 export function deleteProject(projectId: string): Promise<void> {
   return apiRequest(projectPath(projectId), { method: "DELETE" });
+}
+
+/** Change the plan (README) as the student said or typed. */
+export function editProject(projectId: string, body: EditProjectRequest): Promise<EditProjectResponse> {
+  return apiRequest(projectPath(projectId, "/edit"), { method: "POST", json: body, timeoutMs: EDIT_TIMEOUT_MS });
+}
+
+/** Put the plan back to how it was before the last change. */
+export function undoProjectEdit(projectId: string): Promise<StoredProject> {
+  return apiRequest(projectPath(projectId, "/edit/undo"), { method: "POST" });
 }
 
 export function generateProjectImage(projectId: string): Promise<ProjectImageResponse> {

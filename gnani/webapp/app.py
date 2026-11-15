@@ -3,10 +3,10 @@ import sys
 import asyncio
 import logging
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import Depends, FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,8 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT.parent / ".env")
 
 from services.language_layer.language_pipeline import LanguagePipeline
+from services.idea_check import IdeaChecker
+from services.llm_providers import GEMINI, GROQ, MODEL_LABELS, QWEN, gemini_from_env, groq_from_env, use_model
 from services.text_to_speech.tts_pipeline import TTSPipeline
 from services.speech_to_text.stt_pipeline import STTPipeline
 from services.perception_layer.perception_pipeline import PerceptionPipeline
@@ -37,12 +39,16 @@ from services.conversation_manager import (
     ConversationStore,
     ProjectGenerator
 )
+from services.conversation_manager.conversation_service import ModelPipelines
 from services.conversation_manager.session_repository import SessionRepository
 from services.plans import PlanResolver
 from services.project_store import ProjectRepository
 from services.chat_manager import ChatPipeline, ChatService
+from webapp.auth import authenticator_from_env
+from webapp.board_routes import router as board_router
 from webapp.chat_routes import router as chat_router
 from webapp.conversation_routes import router as conversation_router
+from webapp.idea_engine import start_engine
 from webapp.innovator_routes import router as innovator_router
 from webapp.plan_routes import router as plan_router
 from webapp.project_routes import router as project_router
@@ -64,13 +70,29 @@ async def lifespan(app: FastAPI):
     app.state.qwen_warm_up = asyncio.create_task(
         asyncio.to_thread(conversation_pipeline.warm_up)
     )
-    yield
-    innovator_http = getattr(app.state, "innovator_http", None)
-    if innovator_http is not None:
-        await innovator_http.aclose()
+    # The Idea Discovery Engine (Innovator) starts and stops with this backend.
+    async with AsyncExitStack() as stack:
+        app.state.innovator_http = await start_engine(stack)
+        yield
 
 
 app = FastAPI(title="HackMate AI", lifespan=lifespan)
+
+# Who is calling: a verified Clerk session token (see webapp/auth.py).
+# Fails at startup, with a clear message, if sign-in can't be checked.
+app.state.authenticator = authenticator_from_env()
+
+
+def require_test_page() -> None:
+    """
+    The original test page and its endpoints (/, /greeting, /transcribe,
+    /analyse, /generate-image, /readme) call Gnani, Qwen and Stable
+    Diffusion without any sign-in. The app doesn't use them, so they are
+    off unless VEYA_ENABLE_TEST_PAGE=1 (local development only).
+    """
+    if os.getenv("VEYA_ENABLE_TEST_PAGE", "").strip() != "1":
+        raise HTTPException(status_code=404, detail="Not Found")
+
 
 # Browsers only: the native iOS/Android app is not subject to CORS.
 # Set VEYA_CORS_ORIGINS (comma separated) for other origins; never "*" in production.
@@ -85,7 +107,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Content-Type", "X-Veya-User"],
+    allow_headers=["Content-Type", "Authorization", "X-Veya-User"],
 )
 
 GENERATED_IMAGES_DIR = PROJECT_ROOT / "generated_images"
@@ -124,6 +146,59 @@ conversation_pipeline = ConversationPipeline(
 DATABASE_PATH = os.getenv("VEYA_DB_PATH", str(PROJECT_ROOT / "data" / "veya_projects.db"))
 app.state.project_repository = ProjectRepository(DATABASE_PATH)
 
+# =========================================================
+# GEMINI and GROQ (optional): the same pipelines pointed at a cloud model.
+# The user picks Qwen, Gemini or Groq for each voice conversation or chat.
+# =========================================================
+
+# Idea Check (similar projects on GitHub/Devpost, ways to stand out,
+# feasibility) runs with the first summary. VEYA_IDEA_CHECK=off disables it.
+IDEA_CHECK_ON = os.getenv("VEYA_IDEA_CHECK", "on").strip().lower() not in ("off", "false", "0", "no")
+qwen_idea_checker = IdeaChecker(language.client, language.model) if IDEA_CHECK_ON else None
+
+voice_models: dict = {}
+chat_models: dict = {}
+# Clients for features that call a model directly (idea pages, plan edits).
+app.state.llm_models = {QWEN: (language.client, language.model)}
+
+
+def add_cloud_model(name: str, client, model: str) -> None:
+    """The same pipelines as Qwen, pointed at a cloud model (Gemini or Groq),
+    with the detailed Implementation Plan (they have room for it)."""
+
+    cloud_language = use_model(LanguagePipeline(), client, model)
+    cloud_reasoning = use_model(ReasoningPipeline(), client, model)
+    cloud_reasoning.readme_max_tokens = 16000
+    # Groq's free tier: 8,000 tokens a minute. Write the plan in one pass.
+    cloud_reasoning.use_tool_step = name != GROQ
+    generator = ProjectGenerator(
+        perception_pipeline=use_model(PerceptionPipeline(), client, model),
+        reasoning_pipeline=cloud_reasoning,
+        diagram_generator=visual_pipeline.diagram_generator,
+        detailed_plan=True,
+    )
+    idea_checker = IdeaChecker(client, model) if IDEA_CHECK_ON else None
+    voice_models[name] = ModelPipelines(
+        language=cloud_language,
+        conversation=ConversationPipeline(llm_client=client, model_name=model),
+        project_generator=generator,
+        idea_checker=idea_checker,
+    )
+    chat_models[name] = ModelPipelines(
+        language=cloud_language,
+        conversation=ChatPipeline(llm_client=client, model_name=model),
+        project_generator=generator,
+        idea_checker=idea_checker,
+    )
+    app.state.llm_models[name] = (client, model)
+    logging.getLogger(__name__).info("%s available (%s)", MODEL_LABELS[name], model)
+
+
+for provider_name, from_env in ((GEMINI, gemini_from_env), (GROQ, groq_from_env)):
+    configured = from_env()
+    if configured is not None:
+        add_cloud_model(provider_name, *configured)
+
 # Conversations and chats are also written to the same SQLite file, so a
 # restart (or a crash) doesn't lose what the user already said.
 app.state.conversation_service = ConversationService(
@@ -139,7 +214,9 @@ app.state.conversation_service = ConversationService(
     ),
     image_generator=visual_pipeline.image_generator,
     project_repository=app.state.project_repository,
-    plan_resolver=plan_resolver
+    plan_resolver=plan_resolver,
+    other_models=voice_models,
+    idea_checker=qwen_idea_checker,
 )
 
 # TEXT CHAT: model-driven questions (no fixed script), its own sessions,
@@ -158,7 +235,9 @@ app.state.chat_service = ChatService(
     ),
     image_generator=visual_pipeline.image_generator,
     project_repository=app.state.project_repository,
-    plan_resolver=plan_resolver
+    plan_resolver=plan_resolver,
+    other_models=chat_models,
+    idea_checker=qwen_idea_checker,
 )
 
 app.include_router(conversation_router)
@@ -166,6 +245,7 @@ app.include_router(chat_router)
 app.include_router(project_router)
 app.include_router(plan_router)
 app.include_router(innovator_router)
+app.include_router(board_router)
 
 GREETING = "Hey Vaibhav! What idea do you have in mind?"
 
@@ -178,7 +258,7 @@ latest_visual_project = None
 # HOME PAGE
 # =========================================================
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_test_page)])
 async def home():
 
     return """
@@ -1854,7 +1934,7 @@ async def home():
 _greeting_audio: bytes | None = None
 
 
-@app.get("/greeting")
+@app.get("/greeting", dependencies=[Depends(require_test_page)])
 async def greeting():
 
     global _greeting_audio
@@ -1880,7 +1960,7 @@ async def greeting():
 # SPEECH TO TEXT
 # =========================================================
 
-@app.post("/transcribe")
+@app.post("/transcribe", dependencies=[Depends(require_test_page)])
 async def transcribe(audio_file: UploadFile = File(...)):
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -1926,7 +2006,7 @@ async def transcribe(audio_file: UploadFile = File(...)):
 # ANALYSE: LANGUAGE + PERCEPTION + REASONING + DIAGRAM
 # =========================================================
 
-@app.post("/analyse")
+@app.post("/analyse", dependencies=[Depends(require_test_page)])
 async def analyse(data: dict):
 
     global latest_visual_project
@@ -2110,7 +2190,7 @@ async def analyse(data: dict):
 # GENERATE IMAGE: STABLE DIFFUSION ONLY
 # =========================================================
 
-@app.post("/generate-image")
+@app.post("/generate-image", dependencies=[Depends(require_test_page)])
 async def generate_image():
 
     if not latest_visual_project:
@@ -2169,7 +2249,7 @@ async def generate_image():
 # README DOWNLOAD
 # =========================================================
 
-@app.get("/readme")
+@app.get("/readme", dependencies=[Depends(require_test_page)])
 async def download_readme():
 
     raise HTTPException(

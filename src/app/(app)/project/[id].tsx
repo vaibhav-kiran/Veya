@@ -1,7 +1,8 @@
 import { Image } from "expo-image";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View, type ScrollViewInstance } from "react-native";
+import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/AppText";
@@ -11,20 +12,35 @@ import { EmptyState } from "@/components/EmptyState";
 import { Icon } from "@/components/Icon";
 import { IconButton } from "@/components/IconButton";
 import { MermaidDiagram } from "@/components/project/MermaidDiagram";
+import { ProjectTimelineCard } from "@/components/project/ProjectTimelineCard";
 import { PlanView } from "@/components/project/PlanView";
+import { ProjectTabs, type ProjectTab } from "@/components/project/ProjectTabs";
+import { ProjectVoiceEdit } from "@/components/project/ProjectVoiceEdit";
 import { ReadmeCard } from "@/components/project/ReadmeCard";
 import { ScreenBackground } from "@/components/ScreenBackground";
 import { ScreenTopBar } from "@/components/ScreenTopBar";
-import { TimelineItemRow } from "@/components/TimelineItemRow";
+import { DayTimeline } from "@/components/timeline/TimelineParts";
+import { GROUP_BG, Group, Row, SectionHeader } from "@/components/ui/Grouped";
+import { folderColor, folderThatChanged } from "@/constants/folderColors";
 import { PROJECT_SECTIONS } from "@/constants/projectSections";
 import { haptics } from "@/lib/haptics";
+import { fadeSoft } from "@/lib/softMotion";
+import { extractImplementation } from "@/lib/planMarkdown";
 import { ApiError, describeApiError, projectsApi } from "@/lib/veyaApi";
 import { useProjectsStore } from "@/stores/projectsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { colors, fontFamilies, radii, screenGutter, spacing, themed } from "@/theme";
-import { formatShortDate } from "@/utils/date";
+import { colors, fontFamilies, screenGutter, spacing } from "@/theme";
+import { todayISO } from "@/utils/date";
 
-/** Ready-to-build workspace: what, why, how, and what to do next. Loaded from the Veya backend. */
+type TabKey = "timeline" | "overview" | "build" | "visuals";
+
+/**
+ * Ready-to-build workspace. A short header (title, where it came from, what
+ * to do next), then tabs that stay at the top while scrolling: Overview
+ * (Veya's plan), Build (implementation + README), Visuals (workflow and
+ * concept image) and Timeline (deadline, phases and the tasks to tick off). One section at a time, so nothing is repeated
+ * in one long scroll. Loaded from the Veya backend.
+ */
 export default function ProjectScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,7 +51,20 @@ export default function ProjectScreen() {
   const sourceIdea = useWorkspaceStore((state) => Object.values(state.ideas).find((idea) => idea.projectId === id));
   const allItems = useWorkspaceStore((state) => state.items);
   const toggleItemCompleted = useWorkspaceStore((state) => state.toggleItemCompleted);
+  const addItem = useWorkspaceStore((state) => state.addItem);
   const projectDeleted = useWorkspaceStore((state) => state.projectDeleted);
+  // Changed from an Analyze folder: the page takes that folder's colour.
+  const changedBy = useWorkspaceStore((state) => folderThatChanged(state.boards, id));
+
+  // The README's implementation part, shown as its own section.
+  const readme = project?.readme_markdown ?? "";
+  const implementation = useMemo(() => extractImplementation(readme), [readme]);
+  const detailedImplementation = /^###\s+\d+\.\d+\s+(project structure|frontend|backend)/im.test(implementation);
+
+  const [tab, setTab] = useState<TabKey>("overview");
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const scrollY = useRef(0);
+  const tabsY = useRef(0);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -76,7 +105,7 @@ export default function ProjectScreen() {
             />
           ) : (
             <View style={styles.loading}>
-              <ActivityIndicator color={colors.veya.lavender} />
+              <ActivityIndicator color={colors.text.secondary} />
             </View>
           )}
         </SafeAreaView>
@@ -88,13 +117,53 @@ export default function ProjectScreen() {
     .filter((item) => item.projectId === project.project_id)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt));
   const done = items.filter((item) => item.completed).length;
-  const nextUp = items.find((item) => !item.completed);
-  const progress = items.length ? done / items.length : 0;
+  // Open tasks first (soonest first), then the finished ones.
+  const timelineItems = [...items.filter((item) => !item.completed), ...items.filter((item) => item.completed)];
+  const today = todayISO();
+
+  // One task per phase, due on its last day, so the plan shows up in the calendar.
+  const phases = project.timeline?.phases ?? [];
+  const alreadyAdded = (name: string, due: string) => items.some((item) => item.title === name && item.dueDate === due);
+  const phasesInCalendar = phases.length > 0 && phases.every((phase) => alreadyAdded(phase.name, phase.end_date));
+  const addPhasesToCalendar = () => {
+    for (const phase of phases) {
+      if (alreadyAdded(phase.name, phase.end_date)) continue;
+      addItem({
+        kind: "task",
+        title: phase.name,
+        notes: phase.focus.join("\n"),
+        projectId: project.project_id,
+        dueDate: phase.end_date,
+        priority: "normal",
+      });
+    }
+    haptics.success();
+  };
   const deadline = project.project_details?.deadline;
+
+  // Only tabs with something in them.
+  const hasVisuals = Boolean(project.workflow_diagram || project.image_url || project.image_generation_available);
+  const hasBuild = Boolean(implementation || project.readme_markdown.trim());
+  const tabs: (ProjectTab & { key: TabKey })[] = [
+    { key: "overview", label: "Overview", icon: "idea" },
+    ...(hasBuild ? [{ key: "build" as const, label: "Build", icon: "build" as const }] : []),
+    ...(hasVisuals ? [{ key: "visuals" as const, label: "Visuals", icon: "image" as const }] : []),
+    {
+      key: "timeline",
+      label: "Timeline",
+      icon: "calendar",
+      badge: items.length && done < items.length ? String(items.length - done) : undefined,
+    },
+  ];
+  const activeTab: TabKey = tabs.some((entry) => entry.key === tab) ? tab : "overview";
+  const switchTab = (key: string) => {
+    setTab(key as TabKey);
+    // Scrolled past the tabs: start the new section at its top, under the tabs.
+    if (scrollY.current > tabsY.current) scrollRef.current?.scrollTo({ y: tabsY.current, animated: false });
+  };
 
   const editSection = (field: string) => router.push({ pathname: "/section-editor", params: { projectId: project.project_id, field } });
   const newItem = () => router.push({ pathname: "/item-editor", params: { projectId: project.project_id } });
-  const openTimeline = () => router.push({ pathname: "/project-timeline", params: { projectId: project.project_id } });
   const editItem = (itemId: string) => router.push({ pathname: "/item-editor", params: { id: itemId } });
 
   const requestImage = async () => {
@@ -140,207 +209,218 @@ export default function ProjectScreen() {
           onBack={() => router.back()}
           right={<IconButton icon="trash" accessibilityLabel="Delete project" onPress={confirmDelete} disabled={deleting} />}
         />
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <AppText variant="eyebrow" tone="accent">
-            Project
-          </AppText>
-          <Pressable accessibilityRole="button" accessibilityHint="Rename project" onPress={() => editSection("title")}>
-            <AppText variant="h1" accessibilityRole="header" style={styles.title}>
-              {project.title}
-            </AppText>
-          </Pressable>
-          {sourceIdea ? (
-            <Pressable
-              accessibilityRole="link"
-              onPress={() => router.push({ pathname: "/ideas/[id]", params: { id: sourceIdea.id } })}
-              style={styles.source}
-            >
-              <Icon name="idea" size={13} color={colors.text.secondary} />
-              <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
-                From your idea · {sourceIdea.title}
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          stickyHeaderIndices={[1]}
+          onScroll={(event) => (scrollY.current = event.nativeEvent.contentOffset.y)}
+          scrollEventThrottle={32}
+        >
+          {/* ---- header: always visible ---- */}
+          <View style={styles.header}>
+            <View style={styles.meta}>
+              {changedBy ? <View style={[styles.metaDot, { backgroundColor: folderColor(changedBy) }]} /> : null}
+              {sourceIdea ? (
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={() => router.push({ pathname: "/ideas/[id]", params: { id: sourceIdea.id } })}
+                  hitSlop={6}
+                  style={styles.flexShrink}
+                >
+                  <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
+                    From your idea · {sourceIdea.title}
+                  </AppText>
+                </Pressable>
+              ) : (
+                <AppText variant="bodySmall" tone="secondary" numberOfLines={1} style={styles.flexShrink}>
+                  {project.source === "conversation" ? "Planned with Veya" : "Your project"}
+                  {deadline ? ` · due ${deadline}` : ""}
+                </AppText>
+              )}
+            </View>
+            <Pressable accessibilityRole="button" accessibilityHint="Rename project" onPress={() => editSection("title")}>
+              <AppText style={styles.title} accessibilityRole="header" numberOfLines={3}>
+                {project.title}
               </AppText>
             </Pressable>
-          ) : project.source === "conversation" ? (
-            <View style={styles.source}>
-              <Icon name="chat" size={13} color={colors.text.secondary} />
-              <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
-                Planned with Veya{deadline ? ` · deadline: ${deadline}` : ""}
-              </AppText>
-            </View>
-          ) : null}
-
-          <View style={styles.nextCard}>
-            <View style={styles.nextHeader}>
-              <AppText variant="eyebrow" tone="accent">
-                What to do next
-              </AppText>
-              {items.length ? (
-                <AppText variant="caption" tone="secondary">
-                  {done} of {items.length} done
+            {changedBy ? (
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={`Improved for ${changedBy.name}. Opens the analysis.`}
+                onPress={() => router.push({ pathname: "/board/[id]", params: { id: changedBy.id } })}
+                hitSlop={6}
+                style={styles.improved}
+              >
+                <AppText variant="bodySmall" style={[styles.improvedLabel, { color: folderColor(changedBy) }]} numberOfLines={1}>
+                  Improved for {changedBy.name}
                 </AppText>
-              ) : null}
-            </View>
-            {items.length ? (
-              <View style={styles.progressTrack} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: items.length, now: done }}>
-                <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
-              </View>
-            ) : null}
-            {nextUp ? (
-              <Pressable accessibilityRole="button" onPress={() => editItem(nextUp.id)}>
-                <AppText variant="h3">{nextUp.title}</AppText>
-                <AppText variant="bodySmall" tone="secondary">
-                  {nextUp.kind === "milestone" ? "Milestone" : "Task"} · due {formatShortDate(nextUp.dueDate)}
-                </AppText>
+                <Icon name="chevronRight" size={12} color={folderColor(changedBy)} />
               </Pressable>
-            ) : (
-              <AppText variant="bodyMedium" tone="secondary">
-                {items.length ? "Everything's done. Add the next milestone when you're ready." : "Break the project into a first task to get moving."}
-              </AppText>
+            ) : null}
+          </View>
+
+          {/* ---- tabs: stay at the top while scrolling ---- */}
+          <View style={styles.tabsWrap} onLayout={(event) => (tabsY.current = event.nativeEvent.layout.y)}>
+            <ProjectTabs tabs={tabs} value={activeTab} onChange={switchTab} />
+          </View>
+
+          {/* ---- one section at a time ---- */}
+          <LayoutAnimationConfig skipEntering>
+            <Animated.View key={activeTab} entering={fadeSoft} style={styles.tabBody}>
+              {activeTab === "overview" ? (
+                <>
+            {project.plan_response.trim() ? (
+              <>
+                <PlanView markdown={project.plan_response} projectTitle={project.title} openSections={1} />
+              </>
+            ) : null}
+  
+            {/* Projects with Veya's blueprint don't repeat it as editable sections; projects
+                made from an idea (no blueprint) keep them as their only plan. */}
+            {project.plan_response.trim() ? null : (
+              <>
+                <View style={styles.sections}>
+                  {PROJECT_SECTIONS.map((section, index) => (
+                    <CollapsibleSection
+                      key={section.key}
+                      title={section.label}
+                      icon={section.icon}
+                      content={project.sections[section.backendKey]}
+                      placeholder={section.placeholder}
+                      initiallyOpen={index === 0}
+                      onEdit={() => editSection(section.key)}
+                    />
+                  ))}
+                </View>
+                <AppText variant="caption" tone="muted" style={styles.note}>
+                  Sections hold what you write — always editable.
+                </AppText>
+              </>
             )}
-          </View>
-
-          {/* The deadline and phase plan live on their own page. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Timeline and deadline. ${project.deadline_date ? `Due ${formatShortDate(project.deadline_date)}` : "No deadline yet"}`}
-            onPress={openTimeline}
-            style={({ pressed }) => [styles.timelineButton, pressed && styles.timelineButtonPressed]}
-          >
-            <View style={styles.timelineIcon}>
-              <Icon name="calendar" size={16} color={colors.veya.lavender} />
-            </View>
-            <View style={styles.timelineText}>
-              <AppText variant="h4">Timeline & deadline</AppText>
-              <AppText variant="bodySmall" tone="secondary">
-                {project.deadline_date
-                  ? `Due ${formatShortDate(project.deadline_date)} · ${project.timeline?.phases.length ?? 0} phases`
-                  : "No deadline yet. Set one to plan your days"}
-              </AppText>
-            </View>
-            <Icon name="chevronRight" size={16} color={colors.text.muted} />
-          </Pressable>
-
-          {project.plan_response.trim() ? (
-            <>
-              <AppText variant="eyebrow" tone="secondary" style={styles.sectionLabel}>
-                Veya&apos;s plan
-              </AppText>
-              <PlanView markdown={project.plan_response} projectTitle={project.title} />
-            </>
-          ) : null}
-
-          {/* Projects with Veya's blueprint don't repeat it as editable sections; projects
-              made from an idea (no blueprint) keep them as their only plan. */}
-          {project.plan_response.trim() ? null : (
-            <>
-              <AppText variant="eyebrow" tone="secondary" style={styles.sectionLabel}>
-                Plan
-              </AppText>
-              <View style={styles.sections}>
-                {PROJECT_SECTIONS.map((section, index) => (
-                  <CollapsibleSection
-                    key={section.key}
-                    title={section.label}
-                    icon={section.icon}
-                    content={project.sections[section.backendKey]}
-                    placeholder={section.placeholder}
-                    initiallyOpen={index === 0}
-                    onEdit={() => editSection(section.key)}
+  
+                </>
+              ) : null}
+              {activeTab === "build" ? (
+                <>
+            {implementation ? (
+              <>
+                <PlanView
+                  markdown={implementation}
+                  projectTitle={project.title}
+                  heroTitle="How to build it"
+                  heroSubtitle={
+                    detailedImplementation
+                      ? "Project structure, frontend, backend, data and the build order, step by step"
+                      : "The build order, phase by phase, with commands and code"
+                  }
+                  openSections={1}
+                />
+              </>
+            ) : null}
+  
+            {project.readme_markdown.trim() ? (
+              <>
+                <SectionHeader title="README" />
+                <ReadmeCard
+                  projectId={project.project_id}
+                  markdown={project.readme_markdown}
+                  filename={project.readme_filename ?? `${project.title.replace(/\s+/g, "_")}_README.md`}
+                />
+              </>
+            ) : null}
+  
+                </>
+              ) : null}
+              {activeTab === "visuals" ? (
+                <>
+            {project.workflow_diagram ? (
+              <>
+                <SectionHeader title="Workflow" />
+                <MermaidDiagram code={project.workflow_diagram} />
+              </>
+            ) : null}
+  
+            {project.image_url || project.image_generation_available ? (
+              <>
+                <SectionHeader title="Concept image" />
+                {project.image_url ? (
+                  <Image
+                    source={{ uri: projectsApi.assetUrl(project.image_url) }}
+                    style={styles.image}
+                    contentFit="cover"
+                    accessibilityLabel={`Concept image for ${project.title}`}
                   />
-                ))}
-              </View>
-              <AppText variant="caption" tone="muted" style={styles.note}>
-                Sections hold what you write — always editable.
-              </AppText>
-            </>
-          )}
-
-          {project.workflow_diagram ? (
-            <>
-              <AppText variant="eyebrow" tone="secondary" style={styles.sectionLabel}>
-                Workflow
-              </AppText>
-              <MermaidDiagram code={project.workflow_diagram} />
-            </>
-          ) : null}
-
-          {project.image_url || project.image_generation_available ? (
-            <>
-              <AppText variant="eyebrow" tone="secondary" style={styles.sectionLabel}>
-                Concept image
-              </AppText>
-              {project.image_url ? (
-                <Image
-                  source={{ uri: projectsApi.assetUrl(project.image_url) }}
-                  style={styles.image}
-                  contentFit="cover"
-                  accessibilityLabel={`Concept image for ${project.title}`}
-                />
+                ) : null}
+                {imageState.error ? (
+                  <AppText variant="bodySmall" tone="error" accessibilityRole="alert" style={styles.imageError}>
+                    {imageState.error}
+                  </AppText>
+                ) : null}
+                {project.image_generation_available ? (
+                  <Button
+                    label={project.image_url ? "Generate a new image" : "Generate concept image"}
+                    icon="image"
+                    iconPosition="left"
+                    variant="secondary"
+                    loading={imageState.loading}
+                    onPress={() => void requestImage()}
+                    style={styles.imageButton}
+                  />
+                ) : null}
+                {imageState.loading ? (
+                  <AppText variant="caption" tone="muted" align="center" style={styles.note}>
+                    Stable Diffusion is drawing your concept. This can take a few minutes.
+                  </AppText>
+                ) : null}
+              </>
+            ) : null}
+  
+                </>
               ) : null}
-              {imageState.error ? (
-                <AppText variant="bodySmall" tone="error" accessibilityRole="alert" style={styles.imageError}>
-                  {imageState.error}
-                </AppText>
-              ) : null}
-              {project.image_generation_available ? (
-                <Button
-                  label={project.image_url ? "Generate a new image" : "Generate concept image"}
-                  icon="image"
-                  iconPosition="left"
-                  variant="secondary"
-                  loading={imageState.loading}
-                  onPress={() => void requestImage()}
-                  style={styles.imageButton}
-                />
-              ) : null}
-              {imageState.loading ? (
-                <AppText variant="caption" tone="muted" align="center" style={styles.note}>
-                  Stable Diffusion is drawing your concept. This can take a few minutes.
-                </AppText>
-              ) : null}
-            </>
-          ) : null}
+              {activeTab === "timeline" ? (
+                <>
+                  <ProjectTimelineCard
+                    timeline={project.timeline}
+                    deadlineSaid={project.project_details?.deadline ?? null}
+                    onEditDeadline={() => router.push({ pathname: "/deadline-editor", params: { projectId: project.project_id } })}
+                    onAddToCalendar={addPhasesToCalendar}
+                    phasesInCalendar={phasesInCalendar}
+                  />
 
-          {project.readme_markdown.trim() ? (
-            <>
-              <AppText variant="eyebrow" tone="secondary" style={styles.sectionLabel}>
-                README
-              </AppText>
-              <ReadmeCard
-                projectId={project.project_id}
-                markdown={project.readme_markdown}
-                filename={project.readme_filename ?? `${project.title.replace(/\s+/g, "_")}_README.md`}
-              />
-            </>
-          ) : null}
-
-          <View style={styles.tasksHeader}>
-            <AppText variant="eyebrow" tone="secondary">
-              Tasks & milestones
-            </AppText>
-            <Pressable accessibilityRole="button" accessibilityLabel="Add task or milestone" onPress={newItem} hitSlop={8} style={styles.addLink}>
-              <Icon name="plus" size={14} color={colors.veya.lavender} />
-              <AppText variant="bodySmall" tone="accent" style={styles.addLabel}>
-                Add
-              </AppText>
-            </Pressable>
-          </View>
-          {items.length ? (
-            <View style={styles.items}>
-              {items.map((item) => (
-                <TimelineItemRow
-                  key={item.id}
-                  item={item}
-                  showDate
-                  onToggle={() => toggleItemCompleted(item.id)}
-                  onPress={() => editItem(item.id)}
-                />
-              ))}
-            </View>
-          ) : (
-            <Button label="Add first task" variant="secondary" icon="plus" iconPosition="left" onPress={newItem} />
-          )}
+                  <SectionHeader
+                    title={items.length ? `Tasks & milestones · ${done} of ${items.length} done` : "Tasks & milestones"}
+                    action="Add"
+                    onAction={newItem}
+                  />
+                  <Group>
+                    {items.length ? (
+                      <View style={styles.rail}>
+                        <DayTimeline
+                          items={timelineItems}
+                          projectTitle={() => undefined}
+                          today={today}
+                          showDate
+                          onToggle={(item) => toggleItemCompleted(item.id)}
+                          onOpen={(item) => editItem(item.id)}
+                        />
+                      </View>
+                    ) : (
+                      <Row
+                        title="No tasks yet"
+                        subtitle="Break the project into a first task to get moving."
+                        onPress={newItem}
+                        leading={<Icon name="plus" size={15} color={colors.text.muted} />}
+                      />
+                    )}
+                  </Group>
+                </>
+              ) : null}
+            </Animated.View>
+          </LayoutAnimationConfig>
         </ScrollView>
+        {/* Change the plan file by voice (or text). */}
+        {project.readme_markdown.trim() ? <ProjectVoiceEdit projectId={project.project_id} canUndo={Boolean(project.can_undo_edit)} /> : null}
       </SafeAreaView>
     </ScreenBackground>
   );
@@ -349,50 +429,21 @@ export default function ProjectScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
-  content: { paddingHorizontal: screenGutter, paddingBottom: spacing[12] },
-  title: { marginTop: spacing[1], fontSize: 28, lineHeight: 34 },
-  source: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing[2], minHeight: 28 },
-  nextCard: {
-    marginTop: spacing[6],
-    gap: spacing[3],
-    padding: spacing[5],
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.25)"),
-    backgroundColor: themed("rgba(124, 58, 237, 0.10)"),
-  },
-  nextHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  progressTrack: { height: 4, borderRadius: 2, backgroundColor: colors.overlay.borderStrong, overflow: "hidden" },
-  timelineButton: {
-    marginTop: spacing[3],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[3],
-    padding: spacing[4],
-    borderRadius: radii.lg + 2,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.2)"),
-    backgroundColor: colors.veya.surface,
-  },
-  timelineButtonPressed: { borderColor: colors.overlay.lavenderBorder },
-  timelineIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.overlay.lavenderSoft,
-  },
-  timelineText: { flex: 1, gap: 2 },
-  progressFill: { height: 4, borderRadius: 2, backgroundImage: `linear-gradient(90deg, ${colors.veya.violet} 0%, ${colors.veya.lavender} 100%)` },
-  sectionLabel: { marginTop: spacing[8], marginBottom: spacing[3] },
+  // Room at the bottom for the voice-edit orb.
+  content: { paddingHorizontal: screenGutter, paddingBottom: spacing[16] + spacing[8] },
+  header: { gap: spacing[2], paddingTop: spacing[2] },
+  meta: { flexDirection: "row", alignItems: "center", gap: spacing[2] },
+  metaDot: { width: 8, height: 8, borderRadius: 4 },
+  flexShrink: { flexShrink: 1 },
+  title: { fontFamily: fontFamilies.bold, fontSize: 30, lineHeight: 35, letterSpacing: -0.6, color: colors.text.primary },
+  improved: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" },
+  improvedLabel: { fontFamily: fontFamilies.medium },
+  tabsWrap: { paddingTop: spacing[6], paddingBottom: spacing[2], backgroundColor: colors.veya.background },
+  tabBody: { paddingTop: spacing[1] },
   sections: { gap: spacing[3] },
   note: { marginTop: spacing[3] },
-  image: { width: "100%", aspectRatio: 1, borderRadius: radii.lg, backgroundColor: colors.overlay.surfaceRaised },
+  image: { width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: GROUP_BG },
   imageError: { marginTop: spacing[2] },
   imageButton: { marginTop: spacing[3] },
-  tasksHeader: { marginTop: spacing[8], marginBottom: spacing[2], flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  addLink: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 32 },
-  addLabel: { fontFamily: fontFamilies.semibold },
-  items: { gap: spacing[1] },
+  rail: { paddingHorizontal: spacing[4], paddingVertical: spacing[4] },
 });

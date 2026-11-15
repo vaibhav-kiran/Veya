@@ -13,6 +13,17 @@ from services.language_layer.prompts import (
 load_dotenv()
 
 
+def strip_code_fence(text: str) -> str:
+    """Models such as Gemini often wrap JSON in ```json ... ``` fences."""
+
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
+
+
 class LanguagePipeline:
 
     def __init__(self):
@@ -160,7 +171,7 @@ class LanguagePipeline:
         )
 
         try:
-            translated_data = json.loads(translated_text)
+            translated_data = json.loads(strip_code_fence(translated_text))
 
             translated_content = translated_data.get("content")
 

@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import type { AiModel } from "@/constants/aiModels";
 import { BACKEND_LANGUAGE, type LanguageCode } from "@/constants/languages";
 import { createId } from "@/lib/id";
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
 import { ApiError, chatApi, describeApiError, isAbortError, isConversationGone } from "@/lib/veyaApi";
+import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useProjectsStore } from "@/stores/projectsStore";
-import type { ConversationStatus } from "@/types/api";
+import type { ConversationStatus, IdeaCheck, IdeaChoice } from "@/types/api";
 import type { ChatMessage } from "@/types/models";
 
 /**
@@ -34,6 +36,10 @@ type ChatState = {
   /** Clerk user id this chat belongs to — guards against account switches. */
   ownerId: string | null;
   sessionId: string | null;
+  /** The model the current chat thinks with (picked before it started). */
+  model: AiModel | null;
+  /** Idea Check from the summary: similar projects, ways to stand out, feasibility. */
+  ideaCheck: IdeaCheck | null;
   serverStatus: ConversationStatus | null;
   messages: ChatMessage[];
   /** A message is being sent or the chat is starting. */
@@ -49,7 +55,8 @@ type ChatState = {
 
   send: (text: string, language: LanguageCode) => Promise<void>;
   retry: (messageId: string, language: LanguageCode) => Promise<void>;
-  confirm: () => Promise<void>;
+  /** Build the project; `choice` comes from Idea Check (default: as it is, or what was said). */
+  confirm: (choice?: IdeaChoice) => Promise<void>;
   cancel: () => Promise<void>;
   /** Move the current chat into history and start an empty one. */
   startNewChat: () => void;
@@ -112,10 +119,12 @@ export const useChatStore = create<ChatState>()(
         if (isActive(get())) return true;
         const myEpoch = ++epoch;
         try {
-          const turn = await chatApi.startChat(BACKEND_LANGUAGE[language]);
+          const model = usePreferencesStore.getState().aiModel;
+          const turn = await chatApi.startChat(BACKEND_LANGUAGE[language], model);
           if (myEpoch !== epoch) return false;
           set((state) => ({
             sessionId: turn.session_id,
+            model,
             serverStatus: turn.status,
             projectId: null,
             messages: [...state.messages, message("veya", turn.message)],
@@ -139,6 +148,7 @@ export const useChatStore = create<ChatState>()(
           set((state) => ({
             sending: false,
             serverStatus: turn.status,
+            ideaCheck: turn.idea_check ?? null,
             messages: [...updateMessage(state.messages, messageId, { status: "sent" }), message("veya", turn.message)],
           }));
           // The user agreed to the summary: build the project right away.
@@ -160,6 +170,8 @@ export const useChatStore = create<ChatState>()(
       return {
         ownerId: null,
         sessionId: null,
+        model: null,
+        ideaCheck: null,
         serverStatus: null,
         messages: [],
         sending: false,
@@ -194,13 +206,13 @@ export const useChatStore = create<ChatState>()(
           await deliver(messageId, failed.text);
         },
 
-        confirm: async () => {
+        confirm: async (choice) => {
           const { sessionId } = get();
           if (!sessionId || get().generating) return;
           const myEpoch = epoch;
           set({ generating: true, error: null });
           try {
-            const confirmed = await chatApi.confirmChat(sessionId);
+            const confirmed = await chatApi.confirmChat(sessionId, choice);
             if (myEpoch !== epoch) return;
             const name = confirmed.result.project_name || "Your project";
             // The full plan is laid out on the project screen; the chat keeps a short note.
@@ -261,6 +273,8 @@ export const useChatStore = create<ChatState>()(
             : history;
           set({
             sessionId: null,
+            model: null,
+            ideaCheck: null,
             serverStatus: null,
             messages: [],
             sending: false,
@@ -322,9 +336,11 @@ export const useChatStore = create<ChatState>()(
       version: 1,
       storage: persistStorage,
       onRehydrateStorage: reportHydrationErrors("veya.chat"),
-      partialize: ({ ownerId, sessionId, serverStatus, messages, projectId, history }) => ({
+      partialize: ({ ownerId, sessionId, model, ideaCheck, serverStatus, messages, projectId, history }) => ({
         ownerId,
         sessionId,
+        model,
+        ideaCheck,
         serverStatus,
         messages,
         projectId,

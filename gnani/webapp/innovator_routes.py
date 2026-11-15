@@ -1,29 +1,30 @@
 """
 /innovator/* — the app's door to the Idea Discovery Engine (veya-idea-engine/).
 
-The engine runs as its own service (IDEA_ENGINE_URL, default
-http://localhost:8100). The app only ever talks to this backend, so phones
-need one server address and the engine never has to be exposed.
+The engine runs inside this backend (started with it, see
+webapp/idea_engine.py), or as a separate service if IDEA_ENGINE_URL is set.
+The app only ever talks to this backend, so phones need one server address
+and the engine never has to be exposed.
 
 Session and idea ids are random and unguessable; the engine itself has no
 accounts, so treat it as an internal service.
 """
 
-import os
 import re
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-router = APIRouter(prefix="/innovator", tags=["innovator"])
+from services.llm_providers import ModelName, model_unavailable_message
+from webapp.auth import current_user
+from webapp.idea_engine import current_model
 
-ENGINE_URL = os.getenv("IDEA_ENGINE_URL", "http://localhost:8100").rstrip("/")
-UNREACHABLE = (
-    "The Innovator service isn't running. Start veya-idea-engine "
-    "(uv run uvicorn app.main:app --port 8100) and try again."
-)
+# Research costs search-API calls and model time, so only signed-in users may use it.
+router = APIRouter(prefix="/innovator", tags=["innovator"], dependencies=[Depends(current_user)])
+
+UNREACHABLE = "Innovator isn't available on the Veya server right now. Restart the backend and try again."
 # Refining re-runs feasibility, similarity and the critic on a local model.
 SLOW_TIMEOUT = httpx.Timeout(600.0, connect=5.0)
 FAST_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
@@ -51,30 +52,43 @@ class InnovatorProfile(BaseModel):
 class StartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     profile: InnovatorProfile
+    # The model picked in the app; the whole research runs on it.
+    model: ModelName = "qwen"
 
 
 class RefineRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feedback: str = Field(min_length=3, max_length=2000)
+    # The model the search started with.
+    model: ModelName = "qwen"
 
 
 def _client(request: Request) -> httpx.AsyncClient:
+    """The engine, started with the backend (see webapp/idea_engine.py)."""
     client = getattr(request.app.state, "innovator_http", None)
     if client is None:
-        client = httpx.AsyncClient(base_url=ENGINE_URL)
-        request.app.state.innovator_http = client
+        raise HTTPException(503, UNREACHABLE)
     return client
 
 
-async def _call(request: Request, method: str, path: str, *, json: Any = None, slow: bool = False) -> Any:
+async def _call(
+    request: Request, method: str, path: str, *, json: Any = None, slow: bool = False, model: Optional[str] = None
+) -> Any:
+    client = _client(request)
+    switch = getattr(client, "model_switch", None)
+    if model and switch is not None and not switch.available(model):
+        raise HTTPException(503, model_unavailable_message(model))
+    # The engine runs in-process: research it starts inherits this choice.
+    token = current_model.set(model) if model else None
     try:
-        response = await _client(request).request(
-            method, path, json=json, timeout=SLOW_TIMEOUT if slow else FAST_TIMEOUT
-        )
+        response = await client.request(method, path, json=json, timeout=SLOW_TIMEOUT if slow else FAST_TIMEOUT)
     except httpx.TimeoutException:
         raise HTTPException(504, "Innovator is taking too long. Please try again.")
     except httpx.HTTPError:
         raise HTTPException(503, UNREACHABLE)
+    finally:
+        if token is not None:
+            current_model.reset(token)
 
     if response.is_success:
         return response.json()
@@ -106,7 +120,7 @@ async def start(body: StartRequest, request: Request) -> Any:
     # Only what the student filled in; the engine fills the rest with stated assumptions.
     profile = {key: value for key, value in body.profile.model_dump().items() if value not in (None, "", [])}
     return await _call(
-        request, "POST", "/api/v1/idea-discovery/start", json={"profile": profile, "auto_start": True}
+        request, "POST", "/api/v1/idea-discovery/start", json={"profile": profile, "auto_start": True}, model=body.model
     )
 
 
@@ -124,5 +138,5 @@ async def results(session_id: str, request: Request) -> Any:
 async def refine(idea_id: str, body: RefineRequest, request: Request) -> Any:
     return await _call(
         request, "POST", f"/api/v1/ideas/{_check_id(idea_id)}/refine",
-        json={"feedback": body.feedback}, slow=True,
+        json={"feedback": body.feedback}, slow=True, model=body.model,
     )

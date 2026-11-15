@@ -1,14 +1,15 @@
 import { StyleSheet, View } from "react-native";
 
-import { colors, fontFamilies, gradients, radii, spacing, themed } from "@/theme";
+import { colors, fontFamilies, radii, spacing, themed } from "@/theme";
 import type { ProjectTimeline } from "@/types/api";
 import { formatLongDate, formatShortDate, fromISODate, todayISO } from "@/utils/date";
 
+import { GROUP_BG, HAIRLINE } from "../ui/Grouped";
 import { AppText } from "../AppText";
 import { Button } from "../Button";
 import { Icon } from "../Icon";
 
-/** Purple shades for the phase bar, cycling for long plans. */
+/** Shades of the theme colour for the phase bar, cycling for long plans. */
 const PHASE_SHADES = [themed("#C4B5FD"), themed("#A78BFA"), themed("#8B5CF6"), themed("#7C3AED"), themed("#6D28D9"), themed("#5B21B6"), themed("#4C1D95")];
 
 function daysBetween(fromIso: string, toIso: string): number {
@@ -34,7 +35,7 @@ export function ProjectTimelineCard({ timeline, deadlineSaid, onEditDeadline, on
     return (
       <View style={[styles.card, styles.emptyCard]}>
         <View style={styles.emptyIcon}>
-          <Icon name="calendar" size={18} color={colors.veya.lavender} />
+          <Icon name="calendar" size={18} color={colors.text.secondary} />
         </View>
         <View style={styles.flex}>
           <AppText variant="h4">No deadline yet</AppText>
@@ -139,11 +140,11 @@ const styles = StyleSheet.create({
   card: {
     marginTop: spacing[4],
     gap: spacing[4],
-    padding: spacing[5],
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.2)"),
-    backgroundColor: colors.veya.surface,
+    padding: spacing[4],
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: HAIRLINE,
+    backgroundColor: GROUP_BG,
   },
   emptyCard: { flexDirection: "row", alignItems: "center", gap: spacing[3], padding: spacing[4] },
   emptyIcon: {
@@ -156,9 +157,9 @@ const styles = StyleSheet.create({
   },
   header: { flexDirection: "row", alignItems: "center", gap: spacing[3] },
   countdown: { paddingHorizontal: spacing[3], paddingVertical: 6, borderRadius: radii.full },
-  countdownNormal: { backgroundImage: gradients.primaryButton },
+  countdownNormal: { backgroundColor: colors.overlay.lavenderSoft },
   countdownUrgent: { backgroundColor: colors.overlay.errorSoft, borderWidth: 1, borderColor: "rgba(255, 77, 79, 0.45)" },
-  countdownText: { fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 16, color: colors.text.inverse },
+  countdownText: { fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 16, color: colors.text.primary, fontVariant: ["tabular-nums"] },
   countdownTextUrgent: { color: colors.semantic.error },
   bar: { flexDirection: "row", height: 8, borderRadius: 4, overflow: "hidden", gap: 2 },
   barSegment: { height: 8 },
@@ -171,12 +172,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "transparent",
   },
-  phaseCurrent: { borderColor: themed("rgba(196, 181, 253, 0.45)"), backgroundColor: themed("rgba(124, 58, 237, 0.12)") },
+  phaseCurrent: { borderColor: HAIRLINE, backgroundColor: colors.overlay.lavenderSoft },
   phaseDone: { opacity: 0.55 },
   phaseDot: { width: 18, height: 18, borderRadius: 9, marginTop: 2, alignItems: "center", justifyContent: "center" },
   phaseTitleRow: { flexDirection: "row", alignItems: "center", gap: spacing[2] },
   phaseMeta: { marginTop: 1, marginBottom: 2, fontFamily: fontFamilies.medium },
-  nowChip: { paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.full, backgroundColor: colors.veya.lavender },
+  nowChip: { paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.full, backgroundColor: colors.text.primary },
   nowText: { fontFamily: fontFamilies.semibold, fontSize: 11, lineHeight: 14, color: colors.text.inverse },
   actions: { flexDirection: "row", alignItems: "center", gap: spacing[2] },
 });

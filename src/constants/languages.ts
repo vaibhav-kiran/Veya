@@ -6,13 +6,6 @@ import type { BackendLanguage } from "@/types/api";
  * the languages Gnani Prisma STT and Timbre TTS support, and the backend's
  * SUPPORTED_OUTPUT_LANGUAGES.
  */
-export type LanguageOptionData = {
-  code: LanguageCode;
-  label: string;
-  /** Name in its native script, omitted when identical to the label. */
-  nativeLabel?: string;
-};
-
 export const LANGUAGES = [
   { code: "en", label: "English" },
   { code: "hi", label: "Hindi", nativeLabel: "हिन्दी" },

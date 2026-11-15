@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { DEFAULT_AI_MODEL, type AiModel } from "@/constants/aiModels";
 import { DEFAULT_LANGUAGE, isLanguageCode, type LanguageCode } from "@/constants/languages";
 import { SHOW_ONBOARDING_ON_EVERY_LAUNCH } from "@/lib/config";
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
@@ -18,12 +19,15 @@ type PreferencesState = {
   languagesConfirmed: boolean;
   /** The one language Veya listens, replies and speaks in. */
   language: LanguageCode;
+  /** The model Veya thinks with in new voice conversations and chats. */
+  aiModel: AiModel;
   completeOnboarding: (authEntry?: AuthEntry) => void;
   /** Called once the chosen auth screen has opened. */
   clearAuthEntry: () => void;
   /** Development helper: show onboarding again right now. */
   replayOnboarding: () => void;
   setLanguage: (language: LanguageCode) => void;
+  setAiModel: (aiModel: AiModel) => void;
 };
 
 export type AuthEntry = "sign-in" | "sign-up";
@@ -36,17 +40,24 @@ export const usePreferencesStore = create<PreferencesState>()(
       authEntry: "sign-in",
       languagesConfirmed: false,
       language: DEFAULT_LANGUAGE,
+      aiModel: DEFAULT_AI_MODEL,
       completeOnboarding: (authEntry = "sign-in") => set({ onboardingComplete: true, introPending: false, authEntry }),
       clearAuthEntry: () => set({ authEntry: "sign-in" }),
       replayOnboarding: () => set({ introPending: true }),
       setLanguage: (language) => set({ language, languagesConfirmed: true }),
+      setAiModel: (aiModel) => set({ aiModel }),
     }),
     {
       name: "veya.preferences",
       version: 2,
       storage: persistStorage,
       onRehydrateStorage: reportHydrationErrors("veya.preferences"),
-      partialize: ({ onboardingComplete, languagesConfirmed, language }) => ({ onboardingComplete, languagesConfirmed, language }),
+      partialize: ({ onboardingComplete, languagesConfirmed, language, aiModel }) => ({
+        onboardingComplete,
+        languagesConfirmed,
+        language,
+        aiModel,
+      }),
       // v1 kept separate input / response / documentation languages. The
       // response language is the one Veya actually used, so it becomes the
       // single language. Mixed Hinglish / Tanglish become Hindi / Tamil.

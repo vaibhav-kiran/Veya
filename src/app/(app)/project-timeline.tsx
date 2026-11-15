@@ -63,7 +63,7 @@ export default function ProjectTimelineScreen() {
             />
           ) : (
             <View style={styles.loading}>
-              <ActivityIndicator color={colors.veya.lavender} />
+              <ActivityIndicator color={colors.text.secondary} />
             </View>
           )}
         </SafeAreaView>

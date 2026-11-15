@@ -7,24 +7,24 @@ import { AppText } from "@/components/AppText";
 import { Button } from "@/components/Button";
 import { FormMessage } from "@/components/FormMessage";
 import { Icon, type IconName } from "@/components/Icon";
-import { Chip } from "@/components/StatusChip";
 import { TextField } from "@/components/TextField";
+import { GROUP_BG, HAIRLINE, Label, PRESSED_BG, TABULAR } from "@/components/ui/Grouped";
 import { haptics } from "@/lib/haptics";
 import { useInnovatorStore } from "@/stores/innovatorStore";
-import { colors, fontFamilies, radii, spacing, themed } from "@/theme";
+import { colors, fontFamilies, spacing } from "@/theme";
 import type { EvaluatedIdea, EvidenceRef } from "@/types/innovator";
 
-const VERDICT: Record<string, { label: string; tone: "success" | "warning" | "error" }> = {
-  feasible: { label: "Feasible", tone: "success" },
-  stretch: { label: "Stretch", tone: "warning" },
-  not_feasible: { label: "Not feasible", tone: "error" },
+const VERDICT: Record<string, { label: string; color: string }> = {
+  feasible: { label: "Feasible", color: colors.semantic.success },
+  stretch: { label: "Stretch", color: colors.semantic.warning },
+  not_feasible: { label: "Not feasible", color: colors.semantic.error },
 };
 
-const SIMILARITY_TONE: Record<string, "success" | "info" | "warning" | "neutral"> = {
-  strongly_differentiated: "success",
-  potentially_differentiated: "info",
-  significant_existing_overlap: "warning",
-  insufficient_evidence: "neutral",
+const SIMILARITY_COLOR: Record<string, string> = {
+  strongly_differentiated: colors.semantic.success,
+  potentially_differentiated: colors.semantic.info,
+  significant_existing_overlap: colors.semantic.warning,
+  insufficient_evidence: colors.text.muted,
 };
 
 const SIMILARITY_SHORT: Record<string, string> = {
@@ -44,16 +44,22 @@ const SOURCE_ICON: Record<string, IconName> = {
 
 const pretty = (text: string) => text.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 
-function Section({ icon, title, children }: { icon: IconName; title: string; children: React.ReactNode }) {
+function Section({ title, children }: { icon?: IconName; title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
-      <View style={styles.sectionHead}>
-        <Icon name={icon} size={13} color={colors.veya.lavender} />
-        <AppText variant="eyebrow" tone="secondary">
-          {title}
-        </AppText>
-      </View>
+      <Label>{title}</Label>
       {children}
+    </View>
+  );
+}
+
+function Status({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.status}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <AppText variant="caption" tone="secondary">
+        {label}
+      </AppText>
     </View>
   );
 }
@@ -62,9 +68,12 @@ function Bullets({ items }: { items: string[] }) {
   return (
     <View style={styles.bullets}>
       {items.map((item, index) => (
-        <AppText key={`${index}-${item}`} variant="bodySmall" tone="secondary">
-          •  {item}
-        </AppText>
+        <View key={`${index}-${item}`} style={styles.bullet}>
+          <View style={styles.bulletMark} />
+          <AppText variant="bodySmall" tone="secondary" style={styles.flex}>
+            {item}
+          </AppText>
+        </View>
       ))}
     </View>
   );
@@ -133,11 +142,13 @@ export function IdeaResultCard({ evaluated, rank }: { evaluated: EvaluatedIdea; 
   return (
     <View style={styles.card}>
       <View style={styles.top}>
-        <View style={styles.rank}>
-          {rank > 0 ? <AppText style={styles.rankText}>{rank}</AppText> : <Icon name="warning" size={14} color={colors.semantic.warning} />}
-        </View>
+        <AppText style={[styles.rankText, TABULAR, rank === 0 && { color: colors.semantic.warning }]}>
+          {rank > 0 ? String(rank).padStart(2, "0") : "—"}
+        </AppText>
         <View style={styles.titleWrap}>
-          <AppText variant="h3">{idea.title}</AppText>
+          <AppText variant="h4" style={styles.titleText}>
+            {idea.title}
+          </AppText>
           {idea.revision > 0 ? (
             <AppText variant="caption" tone="muted">
               Refined {idea.revision}×
@@ -146,18 +157,20 @@ export function IdeaResultCard({ evaluated, rank }: { evaluated: EvaluatedIdea; 
         </View>
         {evaluated.score !== null ? (
           <View style={styles.score} accessible accessibilityLabel={`Score ${Math.round(evaluated.score)} out of 100`}>
-            <AppText style={styles.scoreValue}>{Math.round(evaluated.score)}</AppText>
+            <AppText style={[styles.scoreValue, TABULAR]}>{Math.round(evaluated.score)}</AppText>
             <AppText variant="caption" tone="muted">
-              / 100
+              of 100
             </AppText>
           </View>
         ) : null}
       </View>
 
       <View style={styles.chips}>
-        {verdict ? <Chip label={verdict.label} tone={verdict.tone} /> : null}
-        {similarity ? <Chip label={SIMILARITY_SHORT[similarity.label] ?? similarity.label_text} tone={SIMILARITY_TONE[similarity.label] ?? "neutral"} /> : null}
-        {sources.length ? <Chip label={`${sources.length} sources`} tone="accent" /> : null}
+        {verdict ? <Status color={verdict.color} label={verdict.label} /> : null}
+        {similarity ? (
+          <Status color={SIMILARITY_COLOR[similarity.label] ?? colors.text.muted} label={SIMILARITY_SHORT[similarity.label] ?? similarity.label_text} />
+        ) : null}
+        {sources.length ? <Status color={colors.text.muted} label={`${sources.length} sources`} /> : null}
       </View>
 
       {rank === 0 && evaluated.rejection_reason ? (
@@ -207,10 +220,10 @@ export function IdeaResultCard({ evaluated, rank }: { evaluated: EvaluatedIdea; 
         }}
         style={styles.toggle}
       >
-        <AppText variant="bodySmall" tone="accent" style={styles.toggleText}>
+        <AppText variant="bodySmall" style={styles.toggleText}>
           {open ? "Hide details" : "Evidence, scoring and plan"}
         </AppText>
-        <Icon name="chevronDown" size={14} color={colors.veya.lavender} style={open && styles.flip} />
+        <Icon name="chevronDown" size={13} color={colors.text.muted} style={open && styles.flip} />
       </Pressable>
 
       {open ? (
@@ -269,7 +282,7 @@ export function IdeaResultCard({ evaluated, rank }: { evaluated: EvaluatedIdea; 
                     <View style={styles.barTrack}>
                       <View style={[styles.barFill, { width: `${Math.max(4, row.score_0_10 * 10)}%` }]} />
                     </View>
-                    <AppText variant="caption" tone="muted" style={styles.barValue}>
+                    <AppText variant="caption" tone="secondary" style={[styles.barValue, TABULAR]}>
                       {row.score_0_10.toFixed(1)}
                     </AppText>
                   </View>
@@ -311,7 +324,6 @@ export function IdeaResultCard({ evaluated, rank }: { evaluated: EvaluatedIdea; 
             <Button
               label="Refine"
               size="small"
-              icon="sparkle"
               onPress={() => void submitRefine()}
               loading={refining}
               disabled={feedback.trim().length < 3}
@@ -342,61 +354,53 @@ const styles = StyleSheet.create({
   card: {
     gap: spacing[4],
     padding: spacing[4],
-    borderRadius: radii.xl - 4,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.2)"),
-    backgroundImage: themed("linear-gradient(165deg, rgba(124, 58, 237, 0.16) 0%, rgba(15, 14, 23, 0.92) 55%)"),
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: HAIRLINE,
+    backgroundColor: GROUP_BG,
   },
+  flex: { flex: 1 },
   top: { flexDirection: "row", alignItems: "flex-start", gap: spacing[3] },
-  rank: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.overlay.lavenderSoft,
-    borderWidth: 1,
-    borderColor: colors.overlay.lavenderBorder,
-  },
-  rankText: { fontFamily: fontFamilies.bold, fontSize: 14, color: colors.veya.lavender },
+  rankText: { width: 24, paddingTop: 2, fontFamily: fontFamilies.semibold, fontSize: 13, color: colors.text.muted },
   titleWrap: { flex: 1, gap: 2 },
+  titleText: { fontFamily: fontFamilies.semibold, color: colors.text.primary },
   score: { alignItems: "flex-end" },
-  scoreValue: { fontFamily: fontFamilies.bold, fontSize: 22, lineHeight: 26, color: colors.veya.lavender },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing[2] },
+  scoreValue: { fontFamily: fontFamilies.semibold, fontSize: 22, lineHeight: 26, color: colors.text.primary },
+  chips: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing[4], rowGap: spacing[1] },
+  status: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dot: { width: 6, height: 6, borderRadius: 3 },
   section: { gap: spacing[1] + 2 },
-  sectionHead: { flexDirection: "row", alignItems: "center", gap: 6 },
   bullets: { gap: 4 },
+  bullet: { flexDirection: "row", gap: spacing[3], alignItems: "flex-start" },
+  bulletMark: { width: 3, height: 3, borderRadius: 2, marginTop: 9, backgroundColor: colors.text.muted },
   toggle: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 32 },
-  toggleText: { fontFamily: fontFamilies.semibold },
+  toggleText: { fontFamily: fontFamilies.medium, color: colors.text.primary },
   flip: { transform: [{ rotate: "180deg" }] },
-  details: { gap: spacing[4], paddingTop: spacing[1], borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.overlay.borderStrong },
+  details: { gap: spacing[4], paddingTop: spacing[4], borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIRLINE },
   bars: { gap: spacing[2] },
-  barRow: { flexDirection: "row", alignItems: "center", gap: spacing[2] },
+  barRow: { flexDirection: "row", alignItems: "center", gap: spacing[3] },
   barLabel: { width: 112 },
-  barTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.overlay.lavenderSoft, overflow: "hidden" },
-  barFill: { height: 6, borderRadius: 3, backgroundColor: colors.veya.violet },
+  barTrack: { flex: 1, height: 2, borderRadius: 1, backgroundColor: HAIRLINE, overflow: "hidden" },
+  barFill: { height: 2, borderRadius: 1, backgroundColor: colors.veya.lavender },
   barValue: { width: 28, textAlign: "right" },
-  sources: { gap: spacing[2] },
+  sources: { borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: HAIRLINE, overflow: "hidden" },
   nearMiss: {
     gap: spacing[2],
-    padding: spacing[3],
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: "rgba(255, 200, 0, 0.3)",
-    backgroundColor: "rgba(255, 200, 0, 0.06)",
+    paddingLeft: spacing[3],
+    borderLeftWidth: 2,
+    borderLeftColor: colors.semantic.warning,
   },
   source: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[3],
-    padding: spacing[3],
-    borderRadius: radii.md,
-    backgroundColor: colors.overlay.surfaceGlass,
-    borderWidth: 1,
-    borderColor: colors.overlay.borderStrong,
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[3],
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: HAIRLINE,
   },
   sourceText: { flex: 1, gap: 2 },
-  pressed: { opacity: 0.7 },
+  pressed: { backgroundColor: PRESSED_BG },
   refine: { gap: spacing[3] },
   actions: { flexDirection: "row", gap: spacing[3] },
   action: { flex: 1 },

@@ -42,7 +42,11 @@ class SpeechRecognitionError(ConversationError):
 
 
 class LanguageModelError(ConversationError):
-    user_message = "VEYA couldn't process that answer right now. Please make sure Ollama is running and try again."
+    user_message = "VEYA couldn't process that answer right now. Please make sure the model (Ollama, Gemini or Groq) is reachable and try again."
+
+
+class ModelUnavailableError(ConversationError):
+    user_message = "Gemini isn't set up on the Veya server. Add GEMINI_API_KEY to veya/.env, or choose Qwen."
 
 
 class ProjectGenerationError(ConversationError):

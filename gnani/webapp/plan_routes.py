@@ -3,16 +3,16 @@ GET /plan — the signed-in user's plan and what it includes, so the app can
 show plan badges, limits and upgrade prompts.
 """
 
-from typing import Annotated, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from services.plans import PlanResolver, plan_config
+from webapp.auth import CurrentUser
 
 router = APIRouter(tags=["plan"])
 
-OwnerHeader = Annotated[Optional[str], Header(alias="X-Veya-User", max_length=128)]
 
 
 class EntitlementsResponse(BaseModel):
@@ -28,7 +28,7 @@ class PlanResponse(BaseModel):
 
 
 @router.get("/plan", response_model=PlanResponse)
-def get_plan(request: Request, owner: OwnerHeader = None) -> PlanResponse:
+def get_plan(request: Request, owner: CurrentUser) -> PlanResponse:
     resolver: PlanResolver = request.app.state.plan_resolver
     config = plan_config(resolver.plan_for(owner))
     repository = getattr(request.app.state, "project_repository", None)

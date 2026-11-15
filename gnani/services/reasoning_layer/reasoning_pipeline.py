@@ -1,4 +1,6 @@
 import json
+
+from services.language_layer.language_pipeline import strip_code_fence
 import os
 import re
 from pathlib import Path
@@ -18,6 +20,13 @@ load_dotenv()
 
 
 class ReasoningPipeline:
+    # Room for the README inside the JSON answer. Raised for Gemini's detailed plan.
+    readme_max_tokens = 12000
+    # Pass 1 (the model may call research tools and drafts its analysis),
+    # then pass 2 writes the JSON with that draft in the conversation. Off for
+    # Groq: its free tier allows 8,000 tokens a minute, and pass 2 with the
+    # draft is about 9,000 tokens on its own, so the plan is written in one pass.
+    use_tool_step = True
 
     # =====================================================
     # INITIALIZATION
@@ -405,7 +414,7 @@ Requirements:
 
             print("\n========== TOOL EXECUTION ==========")
 
-            tool_response = self.run_with_tools(messages)
+            tool_response = self.run_with_tools(messages) if self.use_tool_step else None
 
             if tool_response:
 
@@ -486,7 +495,10 @@ Return valid JSON only.
                 model=self.model,
                 messages=final_messages,
                 temperature=0.2,
-                max_tokens=5000,
+                # The README is a full implementation guide (code
+                # snippets, wiring, timeline) inside the JSON. Gemini's
+                # detailed plan is longer (see readme_max_tokens).
+                max_tokens=self.readme_max_tokens,
                 response_format={
                     "type": "json_object"
                 },
@@ -508,7 +520,7 @@ Return valid JSON only.
                     "The model returned an empty response."
                 )
 
-            reasoning_result = json.loads(response_text)
+            reasoning_result = json.loads(strip_code_fence(response_text))
 
         except json.JSONDecodeError as error:
 

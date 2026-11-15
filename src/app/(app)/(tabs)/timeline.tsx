@@ -1,35 +1,55 @@
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText } from "@/components/AppText";
-import { Button } from "@/components/Button";
-import { GlassCard } from "@/components/GlassCard";
 import { Icon } from "@/components/Icon";
 import { MonthCalendar, type DayMarker } from "@/components/MonthCalendar";
 import { PressableScale } from "@/components/PressableScale";
 import { ScreenBackground } from "@/components/ScreenBackground";
-import { ScreenHeader } from "@/components/ScreenHeader";
-import { Chip } from "@/components/StatusChip";
-import { TimelineItemRow, timelineItemState } from "@/components/TimelineItemRow";
+import {
+  DayTimeline,
+  ProgressRing,
+  ProjectProgress,
+  StatChips,
+  projectHealth,
+  weekStart,
+} from "@/components/timeline/TimelineParts";
+import { Group, Row, SectionHeader, TABULAR } from "@/components/ui/Grouped";
 import { haptics } from "@/lib/haptics";
 import { useProjectsStore } from "@/stores/projectsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { colors, fontFamilies, radii, screenGutter, shadows, spacing, themed } from "@/theme";
-import type { ProjectSummary } from "@/types/api";
+import { colors, fontFamilies, screenGutter, shadows, spacing } from "@/theme";
 import type { ISODate, TimelineItem } from "@/types/models";
-import { formatLongDate, formatShortDate, monthOf, todayISO } from "@/utils/date";
+import { addDays, formatLongDate, formatShortDate, fromISODate, monthOf, todayISO } from "@/utils/date";
 
-const UPCOMING_LIMIT = 3;
+const COMING_UP_LIMIT = 8;
 
-/** 06-calander.png — month view, upcoming deadlines and the selected day's agenda. */
+function daysBetween(from: ISODate, to: ISODate): number {
+  return Math.round((fromISODate(to).getTime() - fromISODate(from).getTime()) / 86_400_000);
+}
+
+function dayName(date: ISODate, today: ISODate): string {
+  const diff = daysBetween(today, date);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return formatLongDate(date);
+}
+
+/**
+ * Calendar tab: how today is going (a progress ring and quick numbers), the
+ * month calendar, the chosen day as a timeline you tick off, what's coming
+ * up, and every project's progress against its deadline.
+ */
 export default function TimelineScreen() {
   const router = useRouter();
   const itemsById = useWorkspaceStore((state) => state.items);
+  const toggleItemCompleted = useWorkspaceStore((state) => state.toggleItemCompleted);
+  const updateItem = useWorkspaceStore((state) => state.updateItem);
   const projects = useProjectsStore((state) => state.summaries);
   const refreshProjects = useProjectsStore((state) => state.refresh);
-  const toggleItemCompleted = useWorkspaceStore((state) => state.toggleItemCompleted);
 
   const today = todayISO();
   const [selectedDate, setSelectedDate] = useState<ISODate>(today);
@@ -42,132 +62,277 @@ export default function TimelineScreen() {
     }, [refreshProjects]),
   );
 
-  const items = Object.values(itemsById).sort(
-    (a, b) => a.dueDate.localeCompare(b.dueDate) || Number(b.kind === "milestone") - Number(a.kind === "milestone"),
+  const items = useMemo(
+    () =>
+      Object.values(itemsById).sort(
+        (a, b) => a.dueDate.localeCompare(b.dueDate) || Number(b.kind === "milestone") - Number(a.kind === "milestone"),
+      ),
+    [itemsById],
   );
-  const markers = items.reduce<Record<ISODate, DayMarker>>((acc, item) => {
-    if (item.completed) return acc;
-    const marker = acc[item.dueDate] ?? { tasks: 0, milestones: 0, overdue: false };
-    acc[item.dueDate] = {
-      tasks: marker.tasks + (item.kind === "task" ? 1 : 0),
-      milestones: marker.milestones + (item.kind === "milestone" ? 1 : 0),
-      overdue: marker.overdue || item.dueDate < today,
-    };
-    return acc;
-  }, {});
+  const deadlines = useMemo(
+    () =>
+      projects
+        .filter((project): project is typeof project & { deadline_date: string } => Boolean(project.deadline_date))
+        .sort((a, b) => a.deadline_date.localeCompare(b.deadline_date)),
+    [projects],
+  );
 
-  // Project deadlines get a red dot on their day.
-  const deadlines = projects
-    .filter((project): project is ProjectSummary & { deadline_date: string } => Boolean(project.deadline_date))
-    .sort((a, b) => a.deadline_date.localeCompare(b.deadline_date));
-  for (const project of deadlines) {
-    const marker = markers[project.deadline_date] ?? { tasks: 0, milestones: 0, overdue: false };
-    markers[project.deadline_date] = { ...marker, deadlines: (marker.deadlines ?? 0) + 1 };
-  }
-  const deadlinesToday = deadlines.filter((project) => project.deadline_date === selectedDate);
-  // Every project, soonest deadline first; projects without one at the end.
-  const projectList = [...deadlines, ...projects.filter((project) => !project.deadline_date)];
-  const openTimeline = (id: string) => router.push({ pathname: "/project-timeline", params: { projectId: id } });
-  const overdue = items.filter((item) => timelineItemState(item) === "overdue");
-  const upcoming = items.filter((item) => !item.completed && item.dueDate >= today).slice(0, UPCOMING_LIMIT);
+  const markers = useMemo(() => {
+    const result: Record<ISODate, DayMarker> = {};
+    for (const item of items) {
+      if (item.completed) continue;
+      const marker = result[item.dueDate] ?? { tasks: 0, milestones: 0, overdue: false };
+      result[item.dueDate] = {
+        tasks: marker.tasks + (item.kind === "task" ? 1 : 0),
+        milestones: marker.milestones + (item.kind === "milestone" ? 1 : 0),
+        overdue: marker.overdue || item.dueDate < today,
+      };
+    }
+    for (const project of deadlines) {
+      const marker = result[project.deadline_date] ?? { tasks: 0, milestones: 0, overdue: false };
+      result[project.deadline_date] = { ...marker, deadlines: (marker.deadlines ?? 0) + 1 };
+    }
+    return result;
+  }, [items, deadlines, today]);
+
+  // ---- numbers ----
+  const todayItems = items.filter((item) => item.dueDate === today);
+  const todayDone = todayItems.filter((item) => item.completed).length;
+  const overdue = items.filter((item) => !item.completed && item.dueDate < today);
+  const thisWeekStart = weekStart(today);
+  const thisWeek = items.filter((item) => item.dueDate >= thisWeekStart && item.dueDate <= addDays(thisWeekStart, 6));
+  const thisWeekDone = thisWeek.filter((item) => item.completed).length;
+  const dueSoon = deadlines.filter((project) => {
+    const days = daysBetween(today, project.deadline_date);
+    return days >= 0 && days <= 7;
+  }).length;
+  const nextUp = items.find((item) => !item.completed && item.dueDate >= today);
+
+  // ---- the chosen day ----
   const agenda = items.filter((item) => item.dueDate === selectedDate);
+  const deadlinesOnDay = deadlines.filter((project) => project.deadline_date === selectedDate);
+
+  // ---- coming up, grouped like a planner ----
+  const comingUp = items.filter((item) => !item.completed && item.dueDate > today).slice(0, COMING_UP_LIMIT);
+  const groups = [
+    { title: "Tomorrow", items: comingUp.filter((item) => daysBetween(today, item.dueDate) === 1) },
+    { title: "This week", items: comingUp.filter((item) => daysBetween(today, item.dueDate) > 1 && item.dueDate <= addDays(thisWeekStart, 6)) },
+    { title: "Later", items: comingUp.filter((item) => item.dueDate > addDays(thisWeekStart, 6)) },
+  ].filter((group) => group.items.length);
+
+  // ---- projects ----
+  const projectRows = [...deadlines, ...projects.filter((project) => !project.deadline_date)].map((project) => {
+    const tasks = items.filter((item) => item.projectId === project.project_id);
+    const done = tasks.filter((item) => item.completed).length;
+    const days = project.deadline_date ? daysBetween(today, project.deadline_date) : null;
+    const countdown =
+      days === null ? null : days > 1 ? `${days} days left` : days === 1 ? "Due tomorrow" : days === 0 ? "Due today" : `${-days} days late`;
+    return {
+      project,
+      done,
+      total: tasks.length,
+      countdown,
+      health: projectHealth(done, tasks.length, project.created_at, project.deadline_date ?? null, today),
+    };
+  });
 
   const projectTitle = (item: TimelineItem) =>
     item.projectId ? projects.find((project) => project.project_id === item.projectId)?.title : undefined;
-  const editItem = (id: string) => router.push({ pathname: "/item-editor", params: { id } });
+  const editItem = (item: TimelineItem) => router.push({ pathname: "/item-editor", params: { id: item.id } });
   const addItem = () => router.push({ pathname: "/item-editor", params: { date: selectedDate } });
+  const openProjectTimeline = (id: string) => router.push({ pathname: "/project-timeline", params: { projectId: id } });
 
-  const jumpToToday = () => {
-    setSelectedDate(today);
-    setMonth(monthOf(today));
+  const selectDate = (date: ISODate) => {
+    setSelectedDate(date);
+    setMonth(monthOf(date));
+  };
+  const moveOverdueToToday = () => {
+    haptics.success();
+    for (const item of overdue) {
+      updateItem(item.id, {
+        kind: item.kind,
+        title: item.title,
+        notes: item.notes,
+        projectId: item.projectId,
+        dueDate: today,
+        priority: item.priority,
+      });
+    }
   };
 
+  const empty = items.length === 0 && projects.length === 0;
+  const todayShare = todayItems.length ? todayDone / todayItems.length : 0;
+
   return (
-    <ScreenBackground glow="top">
+    <ScreenBackground>
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <ScreenHeader
-            eyebrow="Your timeline"
-            title="Stay on track."
-            subtitle="Every idea deserves a deadline."
-            accessory={
-              selectedDate !== today ? (
-                <Pressable accessibilityRole="button" accessibilityLabel="Jump to today" onPress={jumpToToday} hitSlop={8} style={styles.todayPill}>
-                  <AppText variant="bodySmall" tone="accent" style={styles.todayLabel}>
-                    Today
-                  </AppText>
-                </Pressable>
-              ) : undefined
-            }
-          />
-
-          <GlassCard style={styles.calendar}>
-            <MonthCalendar month={month} onMonthChange={setMonth} selectedDate={selectedDate} onSelectDate={setSelectedDate} markers={markers} />
-          </GlassCard>
-
-          {items.length === 0 && projects.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Icon name="calendar" size={22} color={colors.veya.lavender} />
-              <AppText variant="h4" align="center">
-                Your timeline is clear
+          {/* ---- header ---- */}
+          <View style={styles.header}>
+            <View style={styles.headerText}>
+              <AppText variant="bodySmall" tone="secondary">
+                {formatLongDate(today)}
               </AppText>
-              <AppText variant="bodySmall" tone="secondary" align="center">
-                Add tasks and milestones — or turn an idea into a project and plan it there. They&apos;ll show up here.
+              <AppText style={styles.title} accessibilityRole="header">
+                Timeline
               </AppText>
             </View>
-          ) : null}
-
-          {projectList.length > 0 ? (
-            <Section title="Projects">
-              {projectList.map((project) => (
-                <ProjectRow key={project.project_id} project={project} today={today} onPress={() => openTimeline(project.project_id)} />
-              ))}
-            </Section>
-          ) : null}
-
-          {overdue.length > 0 ? (
-            <Section title={`Overdue · ${overdue.length}`} tone="error">
-              {overdue.map((item) => (
-                <TimelineItemRow key={item.id} item={item} projectTitle={projectTitle(item)} showDate onToggle={() => toggleItemCompleted(item.id)} onPress={() => editItem(item.id)} />
-              ))}
-            </Section>
-          ) : null}
-
-          {upcoming.length > 0 ? (
-            <Section title="Upcoming">
-              {upcoming.map((item, index) => (
-                <UpcomingRow
-                  key={item.id}
-                  item={item}
-                  projectTitle={projectTitle(item)}
-                  isLast={index === upcoming.length - 1}
-                  onPress={() => {
-                    haptics.selection();
-                    setSelectedDate(item.dueDate);
-                    setMonth(monthOf(item.dueDate));
-                  }}
-                />
-              ))}
-            </Section>
-          ) : null}
-
-          <Section title={formatLongDate(selectedDate)}>
-            {deadlinesToday.map((project) => (
-              <ProjectRow key={project.project_id} project={project} today={today} onPress={() => openTimeline(project.project_id)} />
-            ))}
-            {agenda.length || deadlinesToday.length ? (
-              agenda.map((item) => (
-                <TimelineItemRow key={item.id} item={item} projectTitle={projectTitle(item)} onToggle={() => toggleItemCompleted(item.id)} onPress={() => editItem(item.id)} />
-              ))
-            ) : (
-              <View style={styles.dayEmpty}>
-                <AppText variant="bodyMedium" tone="secondary">
-                  Nothing scheduled{selectedDate === today ? " today" : ""}.
+            {selectedDate !== today ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Jump to today"
+                hitSlop={8}
+                onPress={() => {
+                  haptics.selection();
+                  selectDate(today);
+                }}
+                style={styles.pill}
+              >
+                <AppText variant="bodySmall" style={styles.pillLabel}>
+                  Today
                 </AppText>
-                <Button label="Add task" size="small" variant="ghost" icon="plus" iconPosition="left" onPress={addItem} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          {/* ---- today at a glance ---- */}
+          <Group>
+            <View style={styles.todayCard}>
+              <ProgressRing progress={todayShare} size={68} stroke={6}>
+                <AppText variant="bodyMedium" style={[styles.ringValue, TABULAR]}>
+                  {todayItems.length ? `${Math.round(todayShare * 100)}%` : "–"}
+                </AppText>
+              </ProgressRing>
+              <View style={styles.todayText}>
+                <AppText variant="h4" style={styles.strong}>
+                  {todayItems.length
+                    ? todayDone === todayItems.length
+                      ? "Today is done"
+                      : `${todayDone} of ${todayItems.length} done today`
+                    : "Nothing due today"}
+                </AppText>
+                <AppText variant="bodySmall" tone="muted" numberOfLines={2}>
+                  {nextUp
+                    ? `Next: ${nextUp.title}${nextUp.dueDate !== today ? ` · ${formatShortDate(nextUp.dueDate)}` : ""}`
+                    : empty
+                      ? "Add tasks, or plan a project, and they show up here."
+                      : "All caught up."}
+                </AppText>
               </View>
+            </View>
+          </Group>
+          <View style={styles.chipsWrap}>
+            <StatChips
+              stats={[
+                { label: "Overdue", value: String(overdue.length), tone: overdue.length ? colors.semantic.error : undefined },
+                { label: "This week", value: thisWeek.length ? `${thisWeekDone}/${thisWeek.length}` : "0" },
+                { label: "Deadlines in 7 days", value: String(dueSoon) },
+                { label: "Projects", value: String(projects.length) },
+              ]}
+            />
+          </View>
+
+          {/* ---- the month ---- */}
+          <SectionHeader title="Calendar" />
+          <Group>
+            <View style={styles.month}>
+              <MonthCalendar month={month} onMonthChange={setMonth} selectedDate={selectedDate} onSelectDate={selectDate} markers={markers} />
+            </View>
+          </Group>
+
+          {/* ---- overdue ---- */}
+          {overdue.length ? (
+            <>
+              <SectionHeader title={`Overdue · ${overdue.length}`} action="Move all to today" onAction={moveOverdueToToday} />
+              <Group>
+                <View style={styles.dayCard}>
+                  <DayTimeline
+                    items={overdue}
+                    projectTitle={projectTitle}
+                    today={today}
+                    onToggle={(item) => toggleItemCompleted(item.id)}
+                    onOpen={editItem}
+                  />
+                </View>
+              </Group>
+            </>
+          ) : null}
+
+          {/* ---- the chosen day ---- */}
+          <SectionHeader title={dayName(selectedDate, today)} action="Add" onAction={addItem} />
+          <Group>
+            {deadlinesOnDay.map((project) => (
+              <Row
+                key={project.project_id}
+                title={project.title}
+                subtitle="Project deadline"
+                onPress={() => openProjectTimeline(project.project_id)}
+                leading={<Icon name="flag" size={15} color={colors.semantic.error} />}
+                trailing={<Icon name="chevronRight" size={13} color={colors.text.muted} />}
+              />
+            ))}
+            {agenda.length ? (
+              <View style={styles.dayCard}>
+                <DayTimeline
+                  items={agenda}
+                  projectTitle={projectTitle}
+                  today={today}
+                  onToggle={(item) => toggleItemCompleted(item.id)}
+                  onOpen={editItem}
+                />
+              </View>
+            ) : (
+              <Row
+                title={selectedDate === today ? "Nothing planned today" : "Nothing planned"}
+                subtitle="Tap to add a task or milestone"
+                onPress={addItem}
+                leading={<Icon name="plus" size={15} color={colors.text.muted} />}
+              />
             )}
-          </Section>
+          </Group>
+
+          {/* ---- coming up ---- */}
+          {groups.map((group) => (
+            <View key={group.title}>
+              <SectionHeader title={group.title} />
+              <Group>
+                {group.items.map((item) => (
+                  <Row
+                    key={item.id}
+                    title={item.title}
+                    subtitle={[formatShortDate(item.dueDate), item.kind === "milestone" ? "Milestone" : null, projectTitle(item) ?? null].filter(Boolean).join(" · ")}
+                    onPress={() => {
+                      haptics.selection();
+                      selectDate(item.dueDate);
+                    }}
+                    leading={
+                      <View style={[styles.bullet, item.kind === "milestone" && styles.bulletMilestone, item.priority === "high" && styles.bulletHigh]} />
+                    }
+                  />
+                ))}
+              </Group>
+            </View>
+          ))}
+
+          {/* ---- projects ---- */}
+          {projectRows.length ? (
+            <>
+              <SectionHeader title="Projects" />
+              <Group>
+                {projectRows.map(({ project, done, total, countdown, health }) => (
+                  <ProjectProgress
+                    key={project.project_id}
+                    title={project.title}
+                    done={done}
+                    total={total}
+                    countdown={countdown}
+                    health={health}
+                    onPress={() => openProjectTimeline(project.project_id)}
+                  />
+                ))}
+              </Group>
+            </>
+          ) : null}
         </ScrollView>
 
         <PressableScale
@@ -180,148 +345,41 @@ export default function TimelineScreen() {
           pressedScale={0.92}
           style={styles.fab}
         >
-          <Icon name="plus" size={26} color={colors.text.primary} weight="medium" />
+          <Icon name="plus" size={24} color={colors.text.inverse} weight="medium" />
         </PressableScale>
       </SafeAreaView>
     </ScreenBackground>
   );
 }
 
-function Section({ title, tone = "secondary", children }: { title: string; tone?: "secondary" | "error"; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <AppText variant="eyebrow" tone={tone} accessibilityRole="header">
-        {title}
-      </AppText>
-      <View style={styles.sectionBody}>{children}</View>
-    </View>
-  );
-}
-
-function daysUntil(today: ISODate, date: ISODate): number {
-  const [y1, m1, d1] = today.split("-").map(Number);
-  const [y2, m2, d2] = date.split("-").map(Number);
-  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
-}
-
-/** A project with its deadline countdown (red flag) — opens the project's timeline page. */
-function ProjectRow({ project, today, onPress }: { project: ProjectSummary; today: ISODate; onPress: () => void }) {
-  const deadline = project.deadline_date;
-  const days = deadline ? daysUntil(today, deadline) : null;
-  const countdown =
-    days === null ? null : days > 1 ? `in ${days} days` : days === 1 ? "tomorrow" : days === 0 ? "today" : `${-days} days ago`;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={deadline ? `${project.title}, due ${formatShortDate(deadline)}, ${countdown}` : `${project.title}, no deadline yet`}
-      accessibilityHint="Opens the project's timeline"
-      onPress={() => {
-        haptics.selection();
-        onPress();
-      }}
-      style={({ pressed }) => [styles.deadline, pressed && styles.pressed]}
-    >
-      <View style={[styles.deadlineIcon, deadline ? styles.deadlineIconDue : styles.deadlineIconEmpty]}>
-        <Icon name={deadline ? "flag" : "calendar"} size={14} color={deadline ? colors.text.primary : colors.text.muted} />
-      </View>
-      <View style={styles.upcomingBody}>
-        <AppText variant="bodyLarge" numberOfLines={1} style={styles.upcomingTitle}>
-          {project.title}
-        </AppText>
-        <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
-          {deadline ? `Deadline · ${formatShortDate(deadline)}` : "No deadline yet"}
-        </AppText>
-      </View>
-      {countdown ? <Chip label={countdown} tone={days !== null && days <= 1 ? "error" : "accent"} /> : null}
-      <Icon name="chevronRight" size={16} color={colors.text.muted} />
-    </Pressable>
-  );
-}
-
-/** Upcoming deadline with the connected-dot rail from the reference. */
-function UpcomingRow({ item, projectTitle, isLast, onPress }: { item: TimelineItem; projectTitle?: string; isLast: boolean; onPress: () => void }) {
-  const heading = projectTitle ?? item.title;
-  const detail = projectTitle ? item.title : item.kind === "milestone" ? "Milestone" : "Task";
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${heading}, ${formatShortDate(item.dueDate)}, ${detail}`}
-      accessibilityHint="Shows this day on the calendar"
-      onPress={onPress}
-      style={({ pressed }) => [styles.upcoming, pressed && styles.pressed]}
-    >
-      <View style={styles.rail}>
-        <View style={[styles.railDot, item.kind === "milestone" ? styles.railDotMilestone : null]} />
-        {!isLast ? <View style={styles.railLine} /> : null}
-      </View>
-      <View style={styles.upcomingBody}>
-        <AppText variant="bodyLarge" numberOfLines={1} style={styles.upcomingTitle}>
-          {heading.toUpperCase()}
-        </AppText>
-        <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
-          {formatShortDate(item.dueDate)} · {detail}
-        </AppText>
-      </View>
-      {item.kind === "milestone" ? <Chip label="Milestone" tone="accent" /> : item.priority === "high" ? <Chip label="Priority" tone="streak" /> : null}
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: { paddingHorizontal: screenGutter, paddingTop: spacing[2], paddingBottom: 120 },
-  todayPill: {
-    minHeight: 32,
-    justifyContent: "center",
-    paddingHorizontal: spacing[3],
-    borderRadius: radii.full,
-    backgroundColor: colors.overlay.lavenderSoft,
-  },
-  todayLabel: { fontFamily: fontFamilies.semibold },
-  calendar: { marginTop: spacing[5], padding: spacing[3] },
-  emptyCard: {
-    marginTop: spacing[5],
-    alignItems: "center",
-    gap: spacing[2],
-    padding: spacing[5],
-    borderRadius: radii.lg + 2,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: colors.overlay.borderStrong,
-  },
-  section: { marginTop: spacing[6], gap: spacing[2] },
-  sectionBody: { gap: spacing[1] },
-  dayEmpty: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing[3], paddingVertical: spacing[2] },
-  upcoming: { flexDirection: "row", alignItems: "center", gap: spacing[3], minHeight: 52 },
-  deadline: { flexDirection: "row", alignItems: "center", gap: spacing[3], minHeight: 56 },
-  deadlineIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deadlineIconDue: { backgroundColor: colors.semantic.error, boxShadow: "0px 0px 10px rgba(255, 77, 79, 0.45)" },
-  deadlineIconEmpty: { backgroundColor: colors.overlay.surfaceRaised },
-  pressed: { opacity: 0.7 },
-  rail: { width: 14, alignSelf: "stretch", alignItems: "center", paddingTop: 8 },
-  railDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: colors.veya.violet },
-  railDotMilestone: { backgroundColor: colors.veya.lavender, boxShadow: themed("0px 0px 10px rgba(196, 181, 253, 0.7)") },
-  railLine: { flex: 1, width: 1.5, marginTop: 3, marginBottom: -12, backgroundColor: colors.overlay.borderStrong },
-  upcomingBody: { flex: 1, gap: 1 },
-  upcomingTitle: { fontFamily: fontFamilies.medium, letterSpacing: 0.2 },
+  header: { flexDirection: "row", alignItems: "flex-end", gap: spacing[3], marginBottom: spacing[5] },
+  headerText: { flex: 1, gap: 2 },
+  title: { fontFamily: fontFamilies.bold, fontSize: 30, lineHeight: 35, letterSpacing: -0.6, color: colors.text.primary },
+  pill: { paddingHorizontal: spacing[3], paddingVertical: 6, borderRadius: 999, backgroundColor: colors.overlay.lavenderSoft },
+  pillLabel: { fontFamily: fontFamilies.medium, color: colors.text.primary },
+  strong: { fontFamily: fontFamilies.semibold, color: colors.text.primary },
+  todayCard: { flexDirection: "row", alignItems: "center", gap: spacing[4], padding: spacing[4] },
+  todayText: { flex: 1, gap: 4 },
+  ringValue: { fontFamily: fontFamilies.semibold, color: colors.text.primary },
+  chipsWrap: { marginTop: spacing[3] },
+  month: { padding: spacing[3] },
+  dayCard: { paddingHorizontal: spacing[4], paddingVertical: spacing[4] },
+  bullet: { width: 8, height: 8, borderRadius: 4, borderWidth: 1.5, borderColor: colors.text.muted },
+  bulletMilestone: { borderRadius: 2, transform: [{ rotate: "45deg" }], borderColor: colors.veya.lavender },
+  bulletHigh: { borderColor: colors.semantic.warning },
   fab: {
     position: "absolute",
     right: screenGutter,
     bottom: spacing[5],
-    width: 56,
-    height: 56,
-    borderRadius: 18,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.overlay.lavenderBorder,
-    backgroundColor: themed("#2A2240"),
+    backgroundColor: colors.veya.lavender,
     boxShadow: shadows.fab,
   },
 });

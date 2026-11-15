@@ -6,12 +6,15 @@ import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from webapp.auth import Authenticator
+
 from webapp.innovator_routes import router
 
 
 def make_client(handler) -> TestClient:
     app = FastAPI()
     app.include_router(router)
+    app.state.authenticator = Authenticator(mode="header")
     app.state.innovator_http = httpx.AsyncClient(base_url="http://engine", transport=httpx.MockTransport(handler))
     return TestClient(app)
 
@@ -55,7 +58,7 @@ def test_engine_down_gives_503_with_a_readable_message():
 
     response = make_client(handler).get("/innovator/ses_abc/status")
     assert response.status_code == 503
-    assert "isn't running" in response.json()["detail"]
+    assert "isn't available" in response.json()["detail"]
 
 
 def test_engine_errors_are_mapped():

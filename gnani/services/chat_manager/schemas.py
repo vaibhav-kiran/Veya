@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.idea_check.schemas import IdeaCheck
+
 from services.conversation_manager.schemas import (
     ConversationAction,
     ConversationStatus,
@@ -29,3 +31,4 @@ class ChatTurnResponse(BaseModel):
     next_action: Optional[ConversationAction] = None
     project_details: ProjectDetails
     skipped_fields: list[str] = Field(default_factory=list)
+    idea_check: Optional[IdeaCheck] = None

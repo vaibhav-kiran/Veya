@@ -1,10 +1,11 @@
+import type { AiModel } from "@/constants/aiModels";
 import type { DiscoveryResults, DiscoveryStart, DiscoveryStatus, EvaluatedIdea, InnovatorProfile } from "@/types/innovator";
 
 import { apiRequest } from "./client";
 
-/** Starts research right away; it runs in the background on the server for a few minutes. */
-export function start(profile: InnovatorProfile): Promise<DiscoveryStart> {
-  return apiRequest("/innovator/start", { method: "POST", json: { profile } });
+/** Starts research right away, on `model`; it runs in the background on the server for a few minutes. */
+export function start(profile: InnovatorProfile, model: AiModel): Promise<DiscoveryStart> {
+  return apiRequest("/innovator/start", { method: "POST", json: { profile, model } });
 }
 
 export function status(sessionId: string): Promise<DiscoveryStatus> {
@@ -16,10 +17,10 @@ export function results(sessionId: string): Promise<DiscoveryResults> {
 }
 
 /** Rewrites the idea with the student's feedback and re-checks it. Slow on a local model. */
-export function refine(ideaId: string, feedback: string): Promise<EvaluatedIdea> {
+export function refine(ideaId: string, feedback: string, model: AiModel): Promise<EvaluatedIdea> {
   return apiRequest(`/innovator/ideas/${encodeURIComponent(ideaId)}/refine`, {
     method: "POST",
-    json: { feedback },
+    json: { feedback, model },
     timeoutMs: 10 * 60_000,
   });
 }

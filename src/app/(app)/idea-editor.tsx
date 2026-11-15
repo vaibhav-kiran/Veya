@@ -18,7 +18,8 @@ const EMPTY_DRAFT: IdeaDraft = { title: "", description: "", problem: "", soluti
 /** Create or refine an idea. `id` edits an existing idea. */
 export default function IdeaEditorScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  // `boardId`: a new idea added from an idea page goes on that page.
+  const { id, boardId } = useLocalSearchParams<{ id?: string; boardId?: string }>();
   const existing = useWorkspaceStore((state) => (id ? state.ideas[id] : undefined));
   const addIdea = useWorkspaceStore((state) => state.addIdea);
   const updateIdea = useWorkspaceStore((state) => state.updateIdea);
@@ -50,7 +51,7 @@ export default function IdeaEditorScreen() {
       return;
     }
     if (existing) updateIdea(existing.id, trimmed);
-    else addIdea(trimmed);
+    else addIdea(trimmed, boardId ?? null);
     haptics.success();
     router.back();
   };

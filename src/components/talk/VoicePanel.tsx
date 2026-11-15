@@ -11,6 +11,11 @@ import { screenGutter, spacing } from "@/theme";
 
 import { AppText } from "../AppText";
 import { Button } from "../Button";
+import type { IdeaChoice } from "@/types/api";
+
+import { BuildChoices } from "../BuildChoices";
+import { IdeaCheckSheet } from "../IdeaCheckSheet";
+import { ModelPicker } from "../ModelPicker";
 import { PressableScale } from "../PressableScale";
 import { ORB_TRANSITION, SlimeOrb } from "../SlimeOrb";
 import { TextLink } from "../TextLink";
@@ -58,6 +63,10 @@ export function VoicePanel() {
   const afterSpeech = useConversationStore((state) => state.afterSpeech);
   const projectId = useConversationStore((state) => state.projectId);
   const handsFree = useConversationStore((state) => state.handsFree);
+  const model = useConversationStore((state) => state.model);
+  const ideaCheck = useConversationStore((state) => state.ideaCheck);
+  const serverStatus = useConversationStore((state) => state.serverStatus);
+  const [ideaCheckOpen, setIdeaCheckOpen] = useState(false);
   const active = useConversationStore(isSessionActive);
   const lastVeya = useConversationStore((state) => state.messages.findLast((message) => message.role === "veya")?.text);
   const lastUser = useConversationStore((state) => state.messages.findLast((message) => message.role === "user")?.text);
@@ -74,7 +83,10 @@ export function VoicePanel() {
   const liveness = useSharedValue(listening ? 1 : 0);
   const [now, setNow] = useState(() => Date.now());
   const showConversation = phase !== "idle" && Boolean(lastVeya);
-  const orbSize = Math.min(width * 0.6, height * (showConversation ? 0.26 : 0.36), 300);
+  // After the summary with an Idea Check: the build choices are on screen, so the orb steps back.
+  const showChoices =
+    Boolean(ideaCheck) && serverStatus === "awaiting_confirmation" && (phase === "awaitingConfirmation" || phase === "listening");
+  const orbSize = Math.min(width * 0.6, height * (showChoices ? 0.14 : showConversation ? 0.26 : 0.36), 300);
 
   useEffect(() => {
     liveness.set(withTiming(listening ? 1 : 0, ORB_TRANSITION));
@@ -112,6 +124,15 @@ export function VoicePanel() {
   };
 
   const busy = BUSY.includes(phase) || (phase === "speaking" && afterSpeech === "generate");
+  // Hands-free opens the mic right after the summary, so the choices show while listening too.
+  const openIdeaCheck = async () => {
+    if (phase === "listening") await voiceControls.discardRecording();
+    setIdeaCheckOpen(true);
+  };
+  const buildWith = async (choice: IdeaChoice) => {
+    if (phase === "listening") await voiceControls.discardRecording();
+    void confirm(choice);
+  };
   // Hands-free: on the user's turn the mic opens by itself, so say so instead of "tap".
   const prompt =
     handsFree && phase === "waitingForUser"
@@ -181,7 +202,11 @@ export function VoicePanel() {
             </AppText>
           ) : null}
 
-          {phase === "awaitingConfirmation" ? (
+          {showChoices && ideaCheck ? (
+            <ScrollView style={[styles.choices, { maxHeight: height * 0.42 }]} showsVerticalScrollIndicator={false}>
+              <BuildChoices check={ideaCheck} onBuild={(choice) => void buildWith(choice)} onSeeDetails={() => void openIdeaCheck()} />
+            </ScrollView>
+          ) : phase === "awaitingConfirmation" ? (
             <Button label="Build my project" icon="build" iconPosition="left" size="small" onPress={() => void confirm()} />
           ) : null}
           {phase === "completed" && projectId ? (
@@ -192,6 +217,12 @@ export function VoicePanel() {
               onPress={() => router.push({ pathname: "/project/[id]", params: { id: projectId } })}
             />
           ) : null}
+          {/* Pick the model before starting; during a conversation, show the one in use. */}
+          {active ? (
+            model ? <ModelPicker activeModel={model} /> : null
+          ) : phase === "idle" || phase === "completed" ? (
+            <ModelPicker activeModel={null} />
+          ) : null}
           {active && phase !== "generatingProject" ? (
             <TextLink label="End conversation" onPress={() => void cancel()} />
           ) : phase === "completed" || phase === "error" ? (
@@ -199,6 +230,15 @@ export function VoicePanel() {
           ) : null}
         </Animated.View>
       </View>
+      {ideaCheck ? (
+        <IdeaCheckSheet
+          check={ideaCheck}
+          visible={ideaCheckOpen}
+          onClose={() => setIdeaCheckOpen(false)}
+          onChoose={(choice) => void confirm(choice)}
+          disabled={busy}
+        />
+      ) : null}
     </View>
   );
 }
@@ -216,4 +256,5 @@ const styles = StyleSheet.create({
   // Fixed height so switching states doesn't shift the group.
   footer: { minHeight: 96 },
   footerInner: { alignItems: "center", gap: spacing[2] },
+  choices: { alignSelf: "stretch", flexGrow: 0 },
 });

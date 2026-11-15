@@ -153,10 +153,12 @@ type SlimeOrbProps = {
   size: number;
   /** Livelier wobble and waveform, e.g. while listening. Transitions smoothly. */
   live?: boolean;
+  /** Hide the waveform bars (at small sizes they read as a line across the orb). */
+  hideWave?: boolean;
 };
 
 /** Veya's voice orb as a soft, wobbling, slime-like circle. */
-export function SlimeOrb({ size, live = false }: SlimeOrbProps) {
+export function SlimeOrb({ size, live = false, hideWave = false }: SlimeOrbProps) {
   const slow = useLoop(9000, true);
   const fast = useLoop(4000, true);
   const glow = useLoop(3000, true, true);
@@ -194,13 +196,15 @@ export function SlimeOrb({ size, live = false }: SlimeOrbProps) {
           <BlobLayer key={layer.phase} layer={layer} size={size} timelines={timelines} />
         ))}
         <View pointerEvents="none" style={[styles.highlight, { width: size * 0.3, height: size * 0.14, left: size * 0.26, top: size * 0.2 }]} />
-        <View pointerEvents="none" style={styles.center}>
-          <View style={styles.wave}>
-            {WAVE.map((height, index) => (
-              <WaveBar key={index} index={index} height={height * (size / 240)} timelines={timelines} />
-            ))}
+        {hideWave ? null : (
+          <View pointerEvents="none" style={styles.center}>
+            <View style={styles.wave}>
+              {WAVE.map((height, index) => (
+                <WaveBar key={index} index={index} height={height * (size / 240)} timelines={timelines} />
+              ))}
+            </View>
           </View>
-        </View>
+        )}
       </Animated.View>
     </View>
   );

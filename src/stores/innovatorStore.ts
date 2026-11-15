@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
+import type { AiModel } from "@/constants/aiModels";
 import { ApiError, describeApiError, innovatorApi } from "@/lib/veyaApi";
+import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type {
   DiscoveryResults,
@@ -47,6 +49,8 @@ type InnovatorState = {
   ownerId: string | null;
   form: InnovatorForm;
   sessionId: string | null;
+  /** The model this search runs on (picked in the app when it started). */
+  model: AiModel | null;
   status: DiscoveryStatus | null;
   results: DiscoveryResults | null;
   starting: boolean;
@@ -102,6 +106,7 @@ export const useInnovatorStore = create<InnovatorState>()(
       ownerId: null,
       form: EMPTY_FORM,
       sessionId: null,
+      model: null,
       status: null,
       results: null,
       starting: false,
@@ -115,10 +120,12 @@ export const useInnovatorStore = create<InnovatorState>()(
       start: async () => {
         const { form, starting } = get();
         if (starting || !canStart(form)) return;
+        // The model picked in the app (Talk / Chat switch, or here).
+        const model = usePreferencesStore.getState().aiModel;
         set({ starting: true, error: null, results: null, status: null, refineErrors: {} });
         try {
-          const started = await innovatorApi.start(toProfile(form));
-          set({ sessionId: started.session_id });
+          const started = await innovatorApi.start(toProfile(form), model);
+          set({ sessionId: started.session_id, model });
           await get().refreshStatus();
         } catch (error) {
           // A 404 here means the backend predates Innovator (an old server process still running).
@@ -156,7 +163,8 @@ export const useInnovatorStore = create<InnovatorState>()(
       refine: async (ideaId, feedback) => {
         set((state) => ({ refining: { ...state.refining, [ideaId]: true }, refineErrors: omit(state.refineErrors, ideaId) }));
         try {
-          await innovatorApi.refine(ideaId, feedback.trim());
+          // Same model as the search it belongs to.
+          await innovatorApi.refine(ideaId, feedback.trim(), get().model ?? usePreferencesStore.getState().aiModel);
           // Refining re-ranks the whole session, so reload everything.
           const sessionId = get().sessionId;
           if (sessionId) set({ results: await innovatorApi.results(sessionId) });
@@ -187,14 +195,14 @@ export const useInnovatorStore = create<InnovatorState>()(
         return id;
       },
 
-      newSearch: () => set({ sessionId: null, status: null, results: null, error: null, refining: {}, refineErrors: {} }),
+      newSearch: () => set({ sessionId: null, model: null, status: null, results: null, error: null, refining: {}, refineErrors: {} }),
 
       dismissError: () => set({ error: null }),
 
       claimForUser: (userId) => {
         if (get().ownerId === userId) return;
         // Another account on this device: never show the previous person's profile or results.
-        set({ ownerId: userId, form: EMPTY_FORM, sessionId: null, status: null, results: null, error: null, saved: {} });
+        set({ ownerId: userId, form: EMPTY_FORM, sessionId: null, model: null, status: null, results: null, error: null, saved: {} });
       },
     }),
     {
@@ -202,7 +210,7 @@ export const useInnovatorStore = create<InnovatorState>()(
       version: 1,
       storage: persistStorage,
       onRehydrateStorage: reportHydrationErrors("veya.innovator"),
-      partialize: ({ ownerId, form, sessionId, status, results, saved }) => ({ ownerId, form, sessionId, status, results, saved }),
+      partialize: ({ ownerId, form, sessionId, model, status, results, saved }) => ({ ownerId, form, sessionId, model, status, results, saved }),
     },
   ),
 );

@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
-import { FlatList, KeyboardAvoidingView, Pressable, StyleSheet, View, type FlatList as FlatListType } from "react-native";
+import { FlatList, KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, View, type FlatList as FlatListType } from "react-native";
 
 import { haptics } from "@/lib/haptics";
 import { isAwaitingConfirmation, isChatBusy, useChatStore } from "@/stores/chatStore";
@@ -15,6 +15,9 @@ import { Icon, type IconName } from "../Icon";
 import { SlimeOrb } from "../SlimeOrb";
 import { Button } from "../Button";
 import { IconButton } from "../IconButton";
+import { BuildChoices } from "../BuildChoices";
+import { IdeaCheckSheet } from "../IdeaCheckSheet";
+import { ModelPicker } from "../ModelPicker";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHistoryDrawer } from "./ChatHistoryDrawer";
 import { ChatMessageRow } from "./ChatMessageRow";
@@ -43,6 +46,9 @@ function EmptyChat({ onPick }: { onPick: (text: string) => void }) {
       <AppText variant="bodyMedium" tone="secondary" align="center" style={styles.emptyBody}>
         Describe your idea in your own words. Veya asks whatever it needs to know, one question at a time, then builds your project plan.
       </AppText>
+      <View style={styles.modelPicker}>
+        <ModelPicker activeModel={null} />
+      </View>
       <View style={styles.starters}>
         {STARTERS.map((starter) => (
           <Pressable
@@ -95,6 +101,9 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
   const startNewChat = useChatStore((state) => state.startNewChat);
   const markSavedAsIdea = useChatStore((state) => state.markSavedAsIdea);
   const history = useChatStore((state) => state.history);
+  const model = useChatStore((state) => state.model);
+  const ideaCheck = useChatStore((state) => state.ideaCheck);
+  const [ideaCheckOpen, setIdeaCheckOpen] = useState(false);
   const viewingId = useChatStore((state) => state.viewingId);
   const viewHistory = useChatStore((state) => state.viewHistory);
   const deleteHistory = useChatStore((state) => state.deleteHistory);
@@ -164,6 +173,8 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
               <AppText variant="caption" tone="muted" align="center">
                 Past chat · {formatRelativeDay(viewing.updatedAt)}
               </AppText>
+            ) : model && messages.length > 0 ? (
+              <ModelPicker activeModel={model} />
             ) : null}
           </View>
           <IconButton
@@ -222,7 +233,13 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
                 </Pressable>
               </View>
             ) : null}
-            {awaitingConfirmation && !sending ? (
+            {awaitingConfirmation && !sending && ideaCheck ? (
+              // Scrolls on small phones so the chat above stays visible.
+              <ScrollView style={styles.choices} contentContainerStyle={styles.choicesContent} showsVerticalScrollIndicator={false}>
+                <BuildChoices check={ideaCheck} onBuild={(choice) => void confirm(choice)} onSeeDetails={() => setIdeaCheckOpen(true)} />
+                <Button label="End this chat" variant="ghost" size="small" onPress={() => void cancel()} />
+              </ScrollView>
+            ) : awaitingConfirmation && !sending ? (
               <View style={styles.actions}>
                 <Button label="Build my project" icon="build" iconPosition="left" size="small" onPress={() => void confirm()} style={styles.flex} />
                 <Button label="End" variant="ghost" size="small" onPress={() => void cancel()} />
@@ -240,6 +257,15 @@ export function ChatPanel({ keyboardOffset }: ChatPanelProps) {
           </View>
         )}
       </KeyboardAvoidingView>
+      {ideaCheck ? (
+        <IdeaCheckSheet
+          check={ideaCheck}
+          visible={ideaCheckOpen}
+          onClose={() => setIdeaCheckOpen(false)}
+          onChoose={(choice) => void confirm(choice)}
+          disabled={busy}
+        />
+      ) : null}
       {historyOpen ? (
         <ChatHistoryDrawer
           history={history}
@@ -266,6 +292,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", gap: spacing[2] },
   emptyTitle: { marginTop: spacing[4] },
   emptyBody: { maxWidth: 300 },
+  modelPicker: { marginTop: spacing[3] },
   starters: { alignSelf: "stretch", marginTop: spacing[5], gap: spacing[2] },
   starter: {
     flexDirection: "row",
@@ -315,5 +342,7 @@ const styles = StyleSheet.create({
   },
   bannerText: { flex: 1 },
   actions: { flexDirection: "row", gap: spacing[2], marginBottom: spacing[2] },
+  choices: { flexGrow: 0, maxHeight: 380, marginBottom: spacing[2] },
+  choicesContent: { gap: spacing[1] },
   status: { marginBottom: spacing[2] },
 });

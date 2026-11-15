@@ -1,13 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import type { AiModel } from "@/constants/aiModels";
 import { BACKEND_LANGUAGE, type LanguageCode } from "@/constants/languages";
 import type { RecordedAudio } from "@/lib/api/conversation";
 import { createId } from "@/lib/id";
 import { persistStorage, reportHydrationErrors } from "@/lib/storage";
 import { ApiError, conversationApi, describeApiError, isAbortError, isConversationGone } from "@/lib/veyaApi";
+import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useProjectsStore } from "@/stores/projectsStore";
-import type { ConversationStatus, ConversationTurnResponse } from "@/types/api";
+import type { ConversationStatus, ConversationTurnResponse, IdeaCheck, IdeaChoice } from "@/types/api";
 import type { ChatMessage } from "@/types/models";
 
 /**
@@ -34,6 +36,10 @@ type ConversationState = {
   /** Clerk user id this conversation belongs to — guards against account switches. */
   ownerId: string | null;
   sessionId: string | null;
+  /** The model the current conversation thinks with (picked before it started). */
+  model: AiModel | null;
+  /** Idea Check from the summary: similar projects, ways to stand out, feasibility. */
+  ideaCheck: IdeaCheck | null;
   serverStatus: ConversationStatus | null;
   phase: VoicePhase;
   messages: ChatMessage[];
@@ -56,7 +62,8 @@ type ConversationState = {
 
   startVoiceConversation: (language: LanguageCode) => Promise<void>;
   sendRecording: (audio: RecordedAudio) => Promise<void>;
-  confirm: () => Promise<void>;
+  /** Build the project; `choice` comes from Idea Check (default: as it is, or what was said). */
+  confirm: (choice?: IdeaChoice) => Promise<void>;
   cancel: () => Promise<void>;
   startNewConversation: () => void;
   claimForUser: (userId: string) => void;
@@ -93,11 +100,12 @@ export const isConversationBusy = (state: Pick<ConversationState, "phase" | "aft
 
 function phaseForStatus(status: ConversationStatus | null): VoicePhase {
   switch (status) {
+    // Confirmed but not built yet (e.g. the build failed): offer "Build my project", not the mic.
     case "awaiting_confirmation":
+    case "ready_to_generate":
       return "awaitingConfirmation";
     case "created":
     case "collecting_information":
-    case "ready_to_generate":
     case "error":
       return "waitingForUser";
     case "generating_project":
@@ -160,6 +168,7 @@ export const useConversationStore = create<ConversationState>()(
           notice: turn.audio_error,
           error: null,
           afterSpeech,
+          ideaCheck: turn.idea_check ?? null,
         }));
 
         if (turn.status === "cancelled") {
@@ -191,9 +200,10 @@ export const useConversationStore = create<ConversationState>()(
         const myEpoch = ++epoch;
         set({ phase: "starting", error: null, notice: null, projectId: null, speechId: null, afterSpeech: null });
         try {
-          const turn = await conversationApi.startConversation(BACKEND_LANGUAGE[language], get().introHeard);
+          const model = usePreferencesStore.getState().aiModel;
+          const turn = await conversationApi.startConversation(BACKEND_LANGUAGE[language], get().introHeard, model);
           if (myEpoch !== epoch) return false;
-          set({ introHeard: true });
+          set({ introHeard: true, model });
           applyTurn(turn, { speak });
           return true;
         } catch (error) {
@@ -221,6 +231,8 @@ export const useConversationStore = create<ConversationState>()(
       return {
         ownerId: null,
         sessionId: null,
+        model: null,
+        ideaCheck: null,
         serverStatus: null,
         phase: "idle",
         messages: [],
@@ -257,13 +269,13 @@ export const useConversationStore = create<ConversationState>()(
           }
         },
 
-        confirm: async () => {
+        confirm: async (choice) => {
           const { sessionId } = get();
           if (!sessionId || get().phase === "generatingProject") return;
           const myEpoch = epoch;
           set({ phase: "generatingProject", afterSpeech: null, speechId: null, error: null });
           try {
-            const confirmed = await conversationApi.confirmConversation(sessionId);
+            const confirmed = await conversationApi.confirmConversation(sessionId, choice);
             if (myEpoch !== epoch) return;
             const name = confirmed.result.project_name || "Your project";
             // The full plan is laid out on the project screen; the chat keeps a short note.
@@ -280,8 +292,10 @@ export const useConversationStore = create<ConversationState>()(
             void useProjectsStore.getState().refresh();
           } catch (error) {
             if (myEpoch !== epoch) return;
-            // A failed generation keeps the answers; confirming again retries.
-            set({ serverStatus: "error" });
+            // A failed generation keeps the answers; "Build my project" retries.
+            // Hands-free stays off: the user already confirmed, so reopening the
+            // mic would only start the summary all over again.
+            set({ serverStatus: "error", handsFree: false });
             handleFailure(error, "awaitingConfirmation");
             if (get().phase === "error" && get().sessionId) set({ phase: "awaitingConfirmation" });
           }
@@ -311,6 +325,8 @@ export const useConversationStore = create<ConversationState>()(
           }
           set({
             sessionId: null,
+            model: null,
+            ideaCheck: null,
             serverStatus: null,
             phase: "idle",
             messages: [],
@@ -391,9 +407,11 @@ export const useConversationStore = create<ConversationState>()(
       version: 2,
       storage: persistStorage,
       onRehydrateStorage: reportHydrationErrors("veya.conversation"),
-      partialize: ({ ownerId, sessionId, serverStatus, messages, projectId, introHeard }) => ({
+      partialize: ({ ownerId, sessionId, model, ideaCheck, serverStatus, messages, projectId, introHeard }) => ({
         ownerId,
         sessionId,
+        model,
+        ideaCheck,
         serverStatus,
         messages,
         projectId,

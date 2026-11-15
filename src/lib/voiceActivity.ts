@@ -11,6 +11,13 @@
  * - The answer ends when nothing has come close to the user's OWN speaking
  *   level for `endSilenceMs`. Background noise sits well below a voice
  *   close to the phone, so it counts as silence in quiet and noisy rooms.
+ * - Phones boost quiet sounds (automatic gain), which can lift background
+ *   noise to within 10 dB of the voice. So the room's own level is tracked
+ *   too, and "talking" must also be clearly above it (halfway from the room
+ *   to the voice).
+ * - Android sometimes reports a level of exactly 0 (-160 dB) between
+ *   readings. Those are missing readings, not silence: counting them made
+ *   background noise look like the rise and fall of speech.
  *
  *   waiting      -> no speech yet
  *   speaking     -> the user is talking (or paused only briefly)
@@ -29,6 +36,8 @@ export type VoiceActivityOptions = {
   minSpeechPeakDb: number;
   /** Levels within this distance of the user's speaking level count as talking. */
   belowSpeechDb: number;
+  /** Readings at or below this are "no reading" (Android's 0 amplitude), not sound. */
+  noReadingDb: number;
   /** Quiet this long after talking ends the answer. */
   endSilenceMs: number;
   /** Give up if no speech starts within this time. */
@@ -42,6 +51,7 @@ export const DEFAULT_VOICE_ACTIVITY_OPTIONS: VoiceActivityOptions = {
   speechSwingDb: 12,
   minSpeechPeakDb: -50,
   belowSpeechDb: 10,
+  noReadingDb: -100,
   endSilenceMs: 1300,
   noSpeechTimeoutMs: 8000,
   maxRecordingMs: 30_000,
@@ -57,6 +67,8 @@ export class VoiceActivityDetector {
   /** Smoothed level of the user's voice. */
   private speechLevel = -160;
   private lastLoudAt = 0;
+  /** The room's level: follows the quietest readings, creeps up slowly. */
+  private noiseFloor: number | null = null;
 
   constructor(options: Partial<VoiceActivityOptions> = {}) {
     this.options = { ...DEFAULT_VOICE_ACTIVITY_OPTIONS, ...options };
@@ -69,8 +81,16 @@ export class VoiceActivityDetector {
 
     if (elapsed >= options.maxRecordingMs) return this.heardSpeech ? "tooLong" : "noSpeech";
 
-    // No reading (metering unavailable for a moment): treat it as silence.
-    const level = typeof levelDb === "number" && Number.isFinite(levelDb) ? Math.max(levelDb, -160) : -160;
+    // No reading (metering unavailable, or Android's 0 amplitude): skip it.
+    // With no readings, the timeouts below still end the recording.
+    const valid = typeof levelDb === "number" && Number.isFinite(levelDb) && levelDb > options.noReadingDb;
+    if (!valid) {
+      if (!this.heardSpeech) return elapsed >= options.noSpeechTimeoutMs ? "noSpeech" : "waiting";
+      return nowMs - this.lastLoudAt >= options.endSilenceMs ? "endOfSpeech" : "speaking";
+    }
+    const level = levelDb;
+    // ~0.6 dB a second upwards, so it adapts if the room gets louder.
+    this.noiseFloor = this.noiseFloor === null || level < this.noiseFloor ? level : this.noiseFloor + 0.03;
     this.samples.push({ at: nowMs, level });
     const keepFrom = nowMs - options.onsetWindowMs;
     while (this.samples.length && this.samples[0].at < keepFrom) this.samples.shift();
@@ -89,8 +109,10 @@ export class VoiceActivityDetector {
       return elapsed >= options.noSpeechTimeoutMs ? "noSpeech" : "waiting";
     }
 
-    // Talking: anything near the user's own level keeps the answer going.
-    if (level >= this.speechLevel - options.belowSpeechDb) {
+    // Talking: near the user's own level AND clearly above the room.
+    const floor = Math.min(this.noiseFloor ?? level, this.speechLevel);
+    const threshold = Math.max(this.speechLevel - options.belowSpeechDb, floor + (this.speechLevel - floor) / 2);
+    if (level >= threshold) {
       this.lastLoudAt = nowMs;
       // Follow the voice (louder or softer) without being pulled down by pauses.
       this.speechLevel = this.speechLevel * 0.85 + level * 0.15;

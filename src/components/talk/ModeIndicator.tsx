@@ -1,11 +1,13 @@
-import { StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import Animated, { Extrapolation, interpolate, useAnimatedStyle, useDerivedValue, type SharedValue } from "react-native-reanimated";
 
 import { colors, fontFamilies, themed } from "@/theme";
 
 import { Icon, type IconName } from "../Icon";
 
-const MODES: { label: string; icon: IconName }[] = [
+export type Mode = { label: string; icon: IconName };
+
+const MODES: Mode[] = [
   { label: "Voice", icon: "mic" },
   { label: "Chat", icon: "chat" },
 ];
@@ -25,21 +27,40 @@ function ModeLabel({ index, progress, label, icon }: { index: number; progress: 
 }
 
 /**
- * Non-interactive "Voice · Chat" indicator. The highlight follows the swipe
- * position so it's always clear which side you're on; switching is by swiping.
+ * "Voice · Chat" indicator (or any two pages). The highlight follows the
+ * swipe position so it's always clear which side you're on. Switching is by
+ * swiping; pass `onSelect` to also allow tapping a side.
  */
-export function ModeIndicator({ scrollX, width }: { scrollX: SharedValue<number>; width: number }) {
+export function ModeIndicator({
+  scrollX,
+  width,
+  modes = MODES,
+  onSelect,
+  accessibilityLabel = "Swipe between voice and chat",
+}: {
+  scrollX: SharedValue<number>;
+  width: number;
+  modes?: Mode[];
+  onSelect?: (index: number) => void;
+  accessibilityLabel?: string;
+}) {
   // 0 on the voice page, 1 on the chat page, fractional mid-swipe.
   const progress = useDerivedValue(() => (width > 0 ? Math.min(1, Math.max(0, scrollX.get() / width)) : 0));
   const pillStyle = useAnimatedStyle(() => ({ transform: [{ translateX: progress.get() * SEGMENT_WIDTH }] }));
 
   return (
-    <View style={styles.wrap} accessible accessibilityRole="text" accessibilityLabel="Swipe between voice and chat">
+    <View style={styles.wrap} accessible={!onSelect} accessibilityRole={onSelect ? undefined : "text"} accessibilityLabel={accessibilityLabel}>
       <View style={styles.track}>
         <Animated.View style={[styles.pill, pillStyle]} />
-        {MODES.map((mode, index) => (
-          <ModeLabel key={mode.label} index={index} progress={progress} label={mode.label} icon={mode.icon} />
-        ))}
+        {modes.map((mode, index) =>
+          onSelect ? (
+            <Pressable key={mode.label} accessibilityRole="tab" accessibilityLabel={mode.label} onPress={() => onSelect(index)}>
+              <ModeLabel index={index} progress={progress} label={mode.label} icon={mode.icon} />
+            </Pressable>
+          ) : (
+            <ModeLabel key={mode.label} index={index} progress={progress} label={mode.label} icon={mode.icon} />
+          ),
+        )}
       </View>
     </View>
   );

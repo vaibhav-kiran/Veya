@@ -1,38 +1,21 @@
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, View, type StyleProp, type TextStyle } from "react-native";
-import Animated, { FadeIn } from "react-native-reanimated";
+import { Platform, Pressable, ScrollView, StyleSheet, View, type StyleProp, type TextStyle } from "react-native";
+import Animated from "react-native-reanimated";
 
 import { haptics } from "@/lib/haptics";
+import { fadeSoft } from "@/lib/softMotion";
 import { isPlaceholderValue, parseInline, parsePlan, type PlanBlock, type PlanSection } from "@/lib/planMarkdown";
-import { colors, fontFamilies, gradients, radii, spacing, themed } from "@/theme";
+import { colors, fontFamilies, radii, spacing, themed } from "@/theme";
 
 import { AppText } from "../AppText";
-import { Icon, type IconName } from "../Icon";
+import { GROUP_BG, HAIRLINE } from "../ui/Grouped";
+import { Icon } from "../Icon";
 
 /** Sections open on first view; the rest show a one-line preview until tapped. */
 const INITIALLY_OPEN = 3;
 /** Short items in these sections read better as chips than as a list. */
 const CHIP_SECTION = /(user|audience|feature|stakeholder|tag|skill)/i;
 const CHIP_MAX_LENGTH = 40;
-
-const SECTION_ICONS: { match: RegExp; icon: IconName }[] = [
-  { match: /problem|pain|need/i, icon: "target" },
-  { match: /solution|approach|overview|idea|concept/i, icon: "idea" },
-  { match: /user|audience|stakeholder/i, icon: "people" },
-  { match: /feature|scope|mvp/i, icon: "sparkle" },
-  { match: /workflow|flow|process|step|implementation|plan/i, icon: "list" },
-  { match: /architecture|design|system/i, icon: "build" },
-  { match: /tech|stack|tool|framework/i, icon: "settings" },
-  { match: /timeline|schedule|milestone|deadline/i, icon: "calendar" },
-  { match: /constraint|requirement|budget/i, icon: "flag" },
-  { match: /challenge|risk|limitation/i, icon: "warning" },
-  { match: /hackathon|readiness|demo|pitch|launch|next/i, icon: "rocket" },
-  { match: /dataset|data|model|ai|ml/i, icon: "brain" },
-];
-
-function iconFor(title: string): IconName {
-  return SECTION_ICONS.find((entry) => entry.match.test(title))?.icon ?? "document";
-}
 
 /** Text with **bold** segments in the app's semibold weight. */
 function RichText({ text, style, tone = "primary" }: { text: string; style?: StyleProp<TextStyle>; tone?: "primary" | "secondary" | "muted" }) {
@@ -85,15 +68,48 @@ function Block({ block, sectionTitle }: { block: PlanBlock; sectionTitle: string
             return (
               <View key={index} style={styles.stepRow}>
                 <View style={styles.stepRail}>
-                  <View style={styles.stepBadge}>
-                    <AppText style={styles.stepNumber}>{index + 1}</AppText>
-                  </View>
+                  <AppText style={styles.stepNumber}>{String(index + 1).padStart(2, "0")}</AppText>
                   {last ? null : <View style={styles.stepLine} />}
                 </View>
                 <RichText text={item} style={[styles.flex, !last && styles.stepText]} />
               </View>
             );
           })}
+        </View>
+      );
+
+    case "code":
+      return (
+        <View style={styles.code}>
+          {block.language ? <AppText style={styles.codeLanguage}>{block.language}</AppText> : null}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <AppText selectable style={styles.codeText}>
+              {block.text}
+            </AppText>
+          </ScrollView>
+        </View>
+      );
+
+    case "table":
+      // Phones are too narrow for wide tables: each row becomes a small card,
+      // its first cell as the title and the others as "header: value" lines.
+      return (
+        <View style={styles.list}>
+          {block.rows.map((row, rowIndex) => (
+            <View key={rowIndex} style={styles.facts}>
+              <View style={styles.tableTitle}>
+                <RichText text={row[0] ?? ""} style={styles.bold} />
+              </View>
+              {block.headers.slice(1).map((header, cellIndex) =>
+                row[cellIndex + 1] ? (
+                  <View key={cellIndex} style={[styles.factRow, styles.factDivider]}>
+                    <AppText style={styles.factLabel}>{header}</AppText>
+                    <RichText text={row[cellIndex + 1]} style={styles.factValue} />
+                  </View>
+                ) : null,
+              )}
+            </View>
+          ))}
         </View>
       );
 
@@ -120,14 +136,16 @@ function previewOf(section: PlanSection): string {
   if (!first) return "";
   if (first.kind === "paragraph") return first.text.replace(/\*\*/g, "");
   if (first.kind === "facts") return first.items.map((fact) => fact.value).join(" · ");
+  if (first.kind === "code") return first.text.split("\n")[0];
+  if (first.kind === "table") return first.rows.map((row) => row[0]).join(" · ");
   return first.items.map((item) => item.replace(/\*\*/g, "")).join(" · ");
 }
 
 function SectionCard({ section, index, initiallyOpen }: { section: PlanSection; index: number; initiallyOpen: boolean }) {
   const [open, setOpen] = useState(initiallyOpen);
-  const icon = iconFor(section.title);
+  const number = section.number ?? String(index + 1);
   return (
-    <View style={styles.card}>
+    <View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={section.title}
@@ -138,26 +156,21 @@ function SectionCard({ section, index, initiallyOpen }: { section: PlanSection; 
         }}
         style={styles.cardHeader}
       >
-        <View style={styles.badge}>
-          <AppText style={styles.badgeText}>{section.number ?? index + 1}</AppText>
-        </View>
+        <AppText style={styles.number}>{/^\d+$/.test(number) ? number.padStart(2, "0") : number}</AppText>
         <View style={styles.headerText}>
-          <View style={styles.titleRow}>
-            <Icon name={icon} size={14} color={colors.veya.lavender} />
-            <AppText variant="h4" style={styles.flex} numberOfLines={2}>
-              {section.title}
-            </AppText>
-          </View>
+          <AppText variant="bodyMedium" style={styles.sectionTitle} numberOfLines={2}>
+            {section.title}
+          </AppText>
           {!open ? (
-            <AppText variant="bodySmall" tone="secondary" numberOfLines={1}>
+            <AppText variant="bodySmall" tone="muted" numberOfLines={1}>
               {previewOf(section)}
             </AppText>
           ) : null}
         </View>
-        <Icon name="chevronDown" size={14} color={colors.text.secondary} style={open ? styles.chevronOpen : undefined} />
+        <Icon name="chevronDown" size={13} color={colors.text.muted} style={open ? styles.chevronOpen : undefined} />
       </Pressable>
       {open ? (
-        <Animated.View entering={FadeIn.duration(180)} style={styles.cardBody}>
+        <Animated.View entering={fadeSoft} style={styles.cardBody}>
           {section.blocks.map((block, blockIndex) => (
             <Block key={blockIndex} block={block} sectionTitle={section.title} />
           ))}
@@ -170,16 +183,21 @@ function SectionCard({ section, index, initiallyOpen }: { section: PlanSection; 
 type PlanViewProps = {
   markdown: string;
   projectTitle: string;
+  /** Heading card text; defaults to the blueprint wording. */
+  heroTitle?: string;
+  heroSubtitle?: string;
+  /** How many sections start open. */
+  openSections?: number;
 };
 
 /** Veya's generated plan, laid out as themed section cards instead of raw Markdown. */
-export function PlanView({ markdown, projectTitle }: PlanViewProps) {
+export function PlanView({ markdown, projectTitle, heroTitle, heroSubtitle, openSections = INITIALLY_OPEN }: PlanViewProps) {
   const plan = useMemo(() => parsePlan(markdown, projectTitle), [markdown, projectTitle]);
 
   // Not structured as sections (e.g. a short answer): show it as clean text.
   if (plan.sections.length === 0) {
     return (
-      <View style={[styles.card, styles.cardBody, styles.plain]}>
+      <View style={[styles.group, styles.cardBody, styles.plain]}>
         {plan.intro.map((block, index) => (
           <Block key={index} block={block} sectionTitle="" />
         ))}
@@ -190,15 +208,12 @@ export function PlanView({ markdown, projectTitle }: PlanViewProps) {
   return (
     <View style={styles.plan}>
       <View style={styles.hero}>
-        <View style={styles.heroIcon}>
-          <Icon name="sparkle" size={18} color={colors.text.inverse} />
-        </View>
-        <View style={styles.flex}>
-          <AppText variant="h4">Your project blueprint</AppText>
-          <AppText variant="bodySmall" tone="secondary">
-            {plan.sections.length} parts, from the problem to a demo-ready build
-          </AppText>
-        </View>
+        <AppText variant="h4" style={styles.sectionTitle}>
+          {heroTitle ?? "Your project blueprint"}
+        </AppText>
+        <AppText variant="bodySmall" tone="muted">
+          {heroSubtitle ?? `${plan.sections.length} parts, from the problem to a demo-ready build`}
+        </AppText>
       </View>
       {plan.intro.length ? (
         <View style={styles.intro}>
@@ -207,55 +222,31 @@ export function PlanView({ markdown, projectTitle }: PlanViewProps) {
           ))}
         </View>
       ) : null}
-      {plan.sections.map((section, index) => (
-        <SectionCard key={`${section.title}-${index}`} section={section} index={index} initiallyOpen={index < INITIALLY_OPEN} />
-      ))}
+      <View style={styles.group}>
+        {plan.sections.map((section, index) => (
+          <View key={`${section.title}-${index}`}>
+            {index > 0 ? <View style={styles.divider} /> : null}
+            <SectionCard section={section} index={index} initiallyOpen={index < openSections} />
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  group: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: HAIRLINE, backgroundColor: GROUP_BG, overflow: "hidden" },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: HAIRLINE, marginLeft: spacing[4] },
+  number: { width: 26, fontFamily: fontFamilies.semibold, fontSize: 12, color: colors.text.muted, fontVariant: ["tabular-nums"] },
+  sectionTitle: { fontFamily: fontFamilies.medium, color: colors.text.primary },
   flex: { flex: 1 },
   bold: { fontFamily: fontFamilies.semibold },
   plan: { gap: spacing[3] },
-  hero: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[3],
-    padding: spacing[4],
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.28)"),
-    backgroundImage: themed("linear-gradient(135deg, rgba(124, 58, 237, 0.28) 0%, rgba(30, 27, 75, 0.55) 100%)"),
-  },
-  heroIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundImage: gradients.primaryButton,
-  },
+  hero: { gap: 2, paddingHorizontal: spacing[1], paddingBottom: spacing[1] },
   intro: { gap: spacing[2], paddingHorizontal: spacing[1] },
-  card: {
-    borderRadius: radii.lg + 2,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.14)"),
-    backgroundColor: colors.veya.surface,
-  },
+  card: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: HAIRLINE, backgroundColor: GROUP_BG },
   plain: { paddingTop: spacing[4] },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: spacing[3], padding: spacing[4], minHeight: 60 },
-  badge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.overlay.lavenderSoft,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.35)"),
-  },
-  badgeText: { fontFamily: fontFamilies.semibold, fontSize: 13, lineHeight: 16, color: colors.veya.lavender },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: spacing[3], paddingHorizontal: spacing[4], paddingVertical: spacing[3], minHeight: 56 },
   headerText: { flex: 1, gap: 2 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   chevronOpen: { transform: [{ rotate: "180deg" }] },
@@ -263,45 +254,34 @@ const styles = StyleSheet.create({
   paragraph: { lineHeight: 22 },
   list: { gap: spacing[2] },
   bulletRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing[3] },
-  bulletDot: { width: 6, height: 6, borderRadius: 3, marginTop: 8, backgroundColor: colors.veya.violet },
+  bulletDot: { width: 3, height: 3, borderRadius: 2, marginTop: 10, backgroundColor: colors.text.muted },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing[2] },
-  chip: {
-    paddingHorizontal: spacing[3],
-    paddingVertical: 6,
-    borderRadius: radii.full,
-    borderWidth: 1,
-    borderColor: themed("rgba(196, 181, 253, 0.3)"),
-    backgroundColor: themed("rgba(124, 58, 237, 0.14)"),
-  },
-  chipText: { fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 18, color: colors.veya.lavender },
+  chip: { paddingHorizontal: spacing[3], paddingVertical: 5, borderRadius: radii.full, borderWidth: StyleSheet.hairlineWidth, borderColor: HAIRLINE },
+  chipText: { fontFamily: fontFamilies.medium, fontSize: 13, lineHeight: 18, color: colors.text.secondary },
   stepRow: { flexDirection: "row", gap: spacing[3] },
-  stepRail: { alignItems: "center", width: 26 },
-  stepBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundImage: gradients.primaryButton,
-  },
-  stepNumber: { fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 15, color: colors.text.inverse },
-  stepLine: { flex: 1, width: 2, marginVertical: 4, borderRadius: 1, backgroundColor: themed("rgba(196, 181, 253, 0.25)") },
+  stepRail: { alignItems: "center", width: 22 },
+  stepNumber: { fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 22, color: colors.text.muted, fontVariant: ["tabular-nums"] },
+  stepLine: { flex: 1, width: StyleSheet.hairlineWidth, marginVertical: 4, backgroundColor: HAIRLINE },
   stepText: { paddingBottom: spacing[4] },
-  facts: {
+  facts: { borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: HAIRLINE },
+  factRow: { flexDirection: "row", gap: spacing[3], paddingHorizontal: spacing[3], paddingVertical: spacing[3] },
+  factDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIRLINE },
+  factLabel: { width: "36%", fontFamily: fontFamilies.medium, fontSize: 12, lineHeight: 20, color: colors.text.muted },
+  factValue: { flex: 1 },
+  tableTitle: { paddingHorizontal: spacing[3], paddingVertical: spacing[2] },
+  code: {
+    gap: spacing[1],
+    padding: spacing[3],
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.overlay.borderStrong,
-    backgroundColor: themed("rgba(22, 20, 36, 0.6)"),
+    backgroundColor: themed("rgba(8, 7, 14, 0.85)"),
   },
-  factRow: { flexDirection: "row", gap: spacing[3], paddingHorizontal: spacing[3], paddingVertical: spacing[3] },
-  factDivider: { borderTopWidth: 1, borderTopColor: colors.overlay.borderStrong },
-  factLabel: {
-    width: "36%",
-    fontFamily: fontFamilies.semibold,
+  codeLanguage: { fontFamily: fontFamilies.semibold, fontSize: 11, lineHeight: 14, letterSpacing: 0.4, color: colors.text.muted },
+  codeText: {
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
     fontSize: 12,
-    lineHeight: 20,
-    letterSpacing: 0.3,
-    color: colors.veya.lavender,
+    lineHeight: 18,
+    color: colors.text.secondary,
   },
-  factValue: { flex: 1 },
 });

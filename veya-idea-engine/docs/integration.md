@@ -1,5 +1,7 @@
 # Integrating with the main Veya backend
 
+> **Now built in:** the Veya backend imports this engine and starts it with itself (see `gnani/webapp/idea_engine.py`), and Innovator calls it in-process. Running it as a separate service below still works: set `IDEA_ENGINE_URL` in Veya's `.env`.
+
 The engine is a separate service. Veya talks to it over HTTP and keeps doing everything it already does (voice, language layer, reasoning layer, plans, README and diagram generation). Nothing in this service imports Veya code, and nothing in Veya needs to import this.
 
 ```

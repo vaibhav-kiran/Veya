@@ -4,7 +4,10 @@ import type {
   ChatTurnResponse,
   ConfirmConversationResponse,
   ConversationStateResponse,
+  IdeaChoice,
 } from "@/types/api";
+
+import type { AiModel } from "@/constants/aiModels";
 
 import { apiRequest } from "./client";
 
@@ -20,8 +23,12 @@ const GENERATION_TIMEOUT_MS = 10 * 60_000;
 
 const chatPath = (sessionId: string, suffix = "") => `/chat/${encodeURIComponent(sessionId)}${suffix}`;
 
-export function startChat(preferredLanguage: BackendLanguage): Promise<ChatTurnResponse> {
-  return apiRequest("/chat/start", { method: "POST", json: { preferred_language: preferredLanguage }, timeoutMs: TURN_TIMEOUT_MS });
+export function startChat(preferredLanguage: BackendLanguage, model: AiModel = "qwen"): Promise<ChatTurnResponse> {
+  return apiRequest("/chat/start", {
+    method: "POST",
+    json: { preferred_language: preferredLanguage, model },
+    timeoutMs: TURN_TIMEOUT_MS,
+  });
 }
 
 export function sendChatMessage(sessionId: string, text: string, signal?: AbortSignal): Promise<ChatTurnResponse> {
@@ -32,8 +39,13 @@ export function getChat(sessionId: string): Promise<ConversationStateResponse> {
   return apiRequest(chatPath(sessionId));
 }
 
-export function confirmChat(sessionId: string): Promise<ConfirmConversationResponse> {
-  return apiRequest(chatPath(sessionId, "/confirm"), { method: "POST", timeoutMs: GENERATION_TIMEOUT_MS });
+/** `choice` comes from Idea Check (build as it is, with an angle, or the smaller version). */
+export function confirmChat(sessionId: string, choice?: IdeaChoice): Promise<ConfirmConversationResponse> {
+  return apiRequest(chatPath(sessionId, "/confirm"), {
+    method: "POST",
+    json: choice ? { choice } : undefined,
+    timeoutMs: GENERATION_TIMEOUT_MS,
+  });
 }
 
 export function cancelChat(sessionId: string): Promise<CancelConversationResponse> {

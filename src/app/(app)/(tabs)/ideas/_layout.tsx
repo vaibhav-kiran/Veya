@@ -8,7 +8,8 @@ export default function IdeasLayout() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: colors.veya.background },
-        animation: "slide_from_right",
+        // Same as the main stack: screens just appear.
+        animation: "none",
       }}
     />
   );
