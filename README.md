@@ -26,22 +26,62 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
 
 ## What it does
 
-- **Talk, don't type.** Tap once and have a conversation. Veya asks about your idea, your timeline and the tech you know. The mic opens on its own when Veya finishes speaking and sends your answer when you stop talking.
-- **Speaks your language.** Answers can be in English or Indian languages (Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi), and Veya replies in the language you pick.
-- **Or chat instead.** A separate text chat where Veya decides what to ask next based on what you've said, with no fixed script.
-- **A real plan at the end.** Once you confirm the summary, Veya generates:
-  - a project blueprint (problem, solution, features, architecture, tech stack, risks, demo readiness)
-  - a README you can drop into your repo
-  - a workflow diagram
-  - a concept image, on request
-- **A timeline that fits your deadline.** Say "this weekend" or "15 March" and Veya splits the days into phases that suit the project, like UI, backend, auth and demo prep. Deadlines show up on the calendar.
-- **Idea Check before you build.** After the summary, Veya searches GitHub and Devpost for projects like yours, tells you honestly how close they are, suggests ways to stand out and checks whether you can build it in the time you have. Pick a direction and build.
-- **Analyze ideas for an event.** Make a page for a hackathon (or a college project, startup or personal project). Give Veya the hackathon's name or link and it reads Devpost, Unstop, Devfolio and the web to find the themes, tracks, judging criteria, dates and rules. Drag your projects onto the page and Veya scores each one against every criterion, compares them, suggests changes that make one a better fit, and applies them to its plan.
-- **Change a plan by voice.** On any saved project, tap the orb and say what to change ("use Firebase instead of PostgreSQL", "we only have one week now"). Veya rewrites only the parts that change and tells you what it did. One tap undoes it.
-- **Pick the model.** Each conversation can think with the local Qwen model, Google Gemini or Groq.
-- **Innovator: ideas you can back up.** Don't have an idea yet? Tell Veya what you're into, your skills, budget and time. It researches real problems, checks what already exists on GitHub and in papers, tests each gap, and suggests up to three ideas with the sources behind them. Weak ideas are never used to fill the list.
-- **Your ideas in one place.** Save ideas, turn them into projects, track tasks and milestones, and look back at past chats.
-- **Make it yours.** Three themes (Violet, Graphite, Emerald), a profile photo or one of ten mascots.
+Veya has five tabs: **Talk**, **Your Ideas**, **Innovator**, **Calendar** and **Settings**.
+
+### Talk: plan a project by voice or chat
+
+- **Voice.** Tap once and talk. Veya asks about your idea, your deadline and the tech you know, one question at a time. The mic opens on its own when Veya finishes speaking and sends your answer when you stop talking.
+- **Chat.** Swipe left for a text chat. Veya decides what to ask next from what you've said, with no fixed script. Voice and chat are separate conversations, and old chats are kept in history.
+- **Your language.** One setting covers listening, replying and speaking: English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati or Punjabi. Veya's fixed lines (greetings, the standard questions) are hand-translated, so they sound natural in every language.
+- **Pick the model.** Each conversation thinks with the local Qwen model, Google Gemini or Groq. The model picker shows which one is in use.
+- **Summary, then Idea Check.** Veya reads back what it understood, and you correct it or confirm. Then it runs an **Idea Check**:
+  - **Similar projects** that already exist on GitHub and Devpost, with links, stars and whether they won a prize
+  - **A verdict:** "Looks different from what's out there", "Some similar work exists", "Very similar projects already exist" or "Not enough evidence to tell"
+  - **Ways to stand out**, so your project isn't a copy
+  - **Feasibility:** whether you can build it in your time, and a smaller version if you can't
+- **Choose and build.** Tick how you want to build it (as it is, or with one of the stand-out directions) and tap Build. You don't have to remember "the second one" from what Veya said.
+- **Nothing is lost.** Conversations are saved on the server, so a restart doesn't wipe your answers.
+
+### The project workspace
+
+Every built project opens as a workspace with four tabs that stay at the top while you scroll:
+
+- **Overview:** Veya's plan, covering the problem, solution, features, architecture, tech stack, risks and demo readiness
+- **Build:** the implementation steps and a README you can drop into your repo
+- **Visuals:** a workflow diagram, plus a concept image on request
+- **Timeline:** the deadline, the phases and the tasks to tick off
+
+You can edit any section by hand, or **change the plan by voice**: tap the glowing orb and say what to change ("use Firebase instead of PostgreSQL", "add a dark mode", "we only have one week now"). Veya rewrites only the sections that change, leaves everything else exactly as it was, and tells you what it changed. One tap undoes it.
+
+### Your Ideas: projects, ideas and Analyze
+
+Swipe between two pages:
+
+- **Projects:** your project plans and saved ideas. Write an idea down now and turn it into a project later.
+- **Analyze:** one folder per hackathon or event, where Veya helps you choose between your projects and makes the best one stronger. Hold any project or idea and drag it onto a folder to add it.
+
+[How Analyze works](#analyze-step-by-step) is explained step by step below.
+
+### Innovator: ideas you can back up
+
+Don't have an idea yet? Tell Veya what you're into, your skills, budget and time. It researches real problems, checks what already exists on GitHub and in papers, tests each gap, and suggests up to three ideas with the sources behind them. Weak ideas are never used to fill the list.
+
+### Calendar
+
+- **Today:** a progress ring and quick numbers
+- **Month view:** with deadlines marked
+- **The chosen day:** as a timeline you tick off
+- **What's coming up**
+- **Progress:** every project's progress against its deadline
+
+Say "this weekend" or "15 March" in the conversation and Veya splits the days into phases that suit the project, like UI, backend, auth and demo prep. Change a deadline and the phases are re-planned. Add your own tasks and milestones on any day.
+
+### Settings
+
+- **Profile:** your name and a photo or one of ten mascots
+- **Veya's language**
+- **Theme:** Violet, Graphite or Emerald
+- **Account:** sign in with email or Google through Clerk
 
 ## How it works
 
@@ -56,7 +96,7 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
         ├── Conversation manager                     (questions, summary, confirmation)
         ├── Perception + Reasoning layers            (Qwen via Ollama, Gemini or Groq)
         ├── Idea Check                               (GitHub + Devpost search, then the model compares)
-        ├── Idea pages                               (research an event, rate and improve ideas)
+        ├── Analyze (idea boards)                    (research an event, rate, check, enhance)
         ├── Project edit                             (change a plan by voice, with undo)
         ├── README + Mermaid diagram generation
         ├── Stable Diffusion                         (concept images, only on request)
@@ -75,13 +115,28 @@ The app never talks to the speech or model services directly. All keys stay on t
 5. **Idea Check.** The model writes a few search queries, GitHub and Devpost are searched in parallel, and results are ranked by how many of your idea's words they share. The model then compares your idea with the closest ones, citing them only by ID, so titles and links always come from the search results, never from the model. If nothing turns up, Veya says there isn't enough evidence; it never claims an idea is new.
 6. **The plan.** The reasoning layer writes the blueprint and README, a Mermaid diagram is drawn from it, and the timeline is split into phases up to your deadline. The project is saved in SQLite under your account.
 
-### Idea pages (Analyze)
+Every step of a conversation is saved to SQLite as it happens. If the server restarts, the conversation picks up where it left off. If a project was being generated at the time, it's marked as failed with a clear message, and confirming again retries.
 
-1. **What is it for?** For a hackathon, Veya searches Devpost, Unstop, Devfolio and DuckDuckGo (or reads the link you give it) and pulls out the themes, tracks, judging criteria, dates, prizes and rules, each tied to the page it came from. If there are no official judging criteria, typical ones are used and labelled as such. Other purposes use criteria that suit them, with no web search.
-2. **Rate.** The model scores each project 1 to 10 on every criterion, with a reason. Totals and the winner are worked out in code, so the ranking is easy to follow.
-3. **Check and improve.** Run an Idea Check on any project, then ask for changes that make it a better fit. Applying them edits that project's README.
+### Analyze step by step
 
-Pages and the ideas on them are kept on the device. The backend only does the research and rating.
+After you create a folder, it walks you through five steps (**Add → Analyze → Check → Enhance → Implement**), shown as a progress bar at the top. The button at the bottom is always the next step.
+
+1. **Create the folder.** Say what it's for: a hackathon, a college project, a startup, a personal project or something else.
+   - **For a hackathon,** give its name or link, by voice or text. Veya searches Devpost, Unstop, Devfolio and the web (DuckDuckGo), reads the best pages, and pulls out the themes, tracks, judging criteria (with weights when they're published), dates, prizes and rules. If the hackathon has no official judging criteria, Veya uses typical ones and says so.
+   - **For other purposes,** Veya uses criteria that suit them, with no web search: a college project is judged differently from a startup.
+2. **Add.** Drag projects or ideas onto the folder, or add them from inside it, or write a new idea there. Up to 12 are rated at once.
+3. **Analyze.** The model scores every project 1 to 10 on each criterion, with a reason for each score, plus strengths, risks and a verdict. The weighted totals and the winner are worked out in code, not by the model, so the ranking is easy to follow. **Why it's the strongest** explains the pick. If you change a project, Veya asks you to analyze again.
+4. **Check.** Runs an Idea Check on every rated project, two at a time, to show what already exists on GitHub and Devpost and how each one compares.
+5. **Enhance.** For the strongest project (or another one you pick), Veya suggests concrete changes that make it a better fit for this event and push it ahead of what already exists. Each change says which criterion it helps with.
+6. **Implement.** One tap applies those changes to the project's README and plan, using the same editor as voice edits. **Updated** lists what changed. Projects a folder changed take on the folder's colour, so you can see where they were improved. (An idea has to be turned into a project first.)
+
+Folders and the ideas in them are kept on the device. The backend only does the research, rating, checking and rewriting.
+
+### Accounts and plans
+
+The app signs in with Clerk and sends Clerk's session token with every request. The backend checks the token's signature and uses the user ID inside it, so each person only sees their own projects.
+
+Each user is on a plan, which sets limits such as how many projects they can keep and whether concept images are on. Free and paid limits are set in one place (`VEYA_DEFAULT_PLAN`, `VEYA_PAID_USERS`, `VEYA_FREE_MAX_PROJECTS`, `VEYA_FREE_IMAGES`), and the app shows them through `GET /plan`.
 
 ### Choosing a model
 
