@@ -35,6 +35,10 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
   - a workflow diagram
   - a concept image, on request
 - **A timeline that fits your deadline.** Say "this weekend" or "15 March" and Veya splits the days into phases that suit the project, like UI, backend, auth and demo prep. Deadlines show up on the calendar.
+- **Idea Check before you build.** After the summary, Veya searches GitHub and Devpost for projects like yours, tells you honestly how close they are, suggests ways to stand out and checks whether you can build it in the time you have. Pick a direction and build.
+- **Analyze ideas for an event.** Make a page for a hackathon (or a college project, startup or personal project). Give Veya the hackathon's name or link and it reads Devpost, Unstop, Devfolio and the web to find the themes, tracks, judging criteria, dates and rules. Drag your projects onto the page and Veya scores each one against every criterion, compares them, suggests changes that make one a better fit, and applies them to its plan.
+- **Change a plan by voice.** On any saved project, tap the orb and say what to change ("use Firebase instead of PostgreSQL", "we only have one week now"). Veya rewrites only the parts that change and tells you what it did. One tap undoes it.
+- **Pick the model.** Each conversation can think with the local Qwen model, Google Gemini or Groq.
 - **Innovator: ideas you can back up.** Don't have an idea yet? Tell Veya what you're into, your skills, budget and time. It researches real problems, checks what already exists on GitHub and in papers, tests each gap, and suggests up to three ideas with the sources behind them. Weak ideas are never used to fill the list.
 - **Your ideas in one place.** Save ideas, turn them into projects, track tasks and milestones, and look back at past chats.
 - **Make it yours.** Three themes (Violet, Graphite, Emerald), a profile photo or one of ten mascots.
@@ -43,30 +47,64 @@ Veya flips that around. Instead of you asking a chatbot questions, **Veya asks y
 
 ```
  Expo app (iOS · Android · Web)
-        │  REST
+        │  REST, with a Clerk session token on every request
         ▼
  FastAPI backend (gnani/)
+        ├── Auth                                     (checks the Clerk token, knows who is asking)
         ├── Gnani speech-to-text / text-to-speech   (voice in, voice out)
         ├── Language layer                           (translate to and from English)
         ├── Conversation manager                     (questions, summary, confirmation)
-        ├── Perception + Reasoning layers            (local Qwen model via Ollama)
+        ├── Perception + Reasoning layers            (Qwen via Ollama, Gemini or Groq)
+        ├── Idea Check                               (GitHub + Devpost search, then the model compares)
+        ├── Idea pages                               (research an event, rate and improve ideas)
+        ├── Project edit                             (change a plan by voice, with undo)
         ├── README + Mermaid diagram generation
         ├── Stable Diffusion                         (concept images, only on request)
-        ├── Innovator proxy ──► Idea engine (veya-idea-engine/, :8100)
+        ├── Idea engine (veya-idea-engine/)          (Innovator, runs inside the backend)
         └── SQLite                                   (saved projects)
 ```
 
 The app never talks to the speech or model services directly. All keys stay on the server.
+
+### From a voice answer to a plan
+
+1. **You speak.** The app records until you stop talking and sends the audio to the backend.
+2. **Speech to text.** Gnani turns it into text in your language. The language layer translates it to English, so the rest of the system works in one language.
+3. **Veya asks the next question.** The conversation manager keeps track of what it knows (idea, deadline, skills, tech) and asks only about what is missing. Fixed lines like greetings come from hand-written translations; model-written replies are translated back and spoken with Gnani's voice.
+4. **Summary and confirmation.** Veya reads back what it understood. You correct it or confirm.
+5. **Idea Check.** The model writes a few search queries, GitHub and Devpost are searched in parallel, and results are ranked by how many of your idea's words they share. The model then compares your idea with the closest ones, citing them only by ID, so titles and links always come from the search results, never from the model. If nothing turns up, Veya says there isn't enough evidence; it never claims an idea is new.
+6. **The plan.** The reasoning layer writes the blueprint and README, a Mermaid diagram is drawn from it, and the timeline is split into phases up to your deadline. The project is saved in SQLite under your account.
+
+### Idea pages (Analyze)
+
+1. **What is it for?** For a hackathon, Veya searches Devpost, Unstop, Devfolio and DuckDuckGo (or reads the link you give it) and pulls out the themes, tracks, judging criteria, dates, prizes and rules, each tied to the page it came from. If there are no official judging criteria, typical ones are used and labelled as such. Other purposes use criteria that suit them, with no web search.
+2. **Rate.** The model scores each project 1 to 10 on every criterion, with a reason. Totals and the winner are worked out in code, so the ranking is easy to follow.
+3. **Check and improve.** Run an Idea Check on any project, then ask for changes that make it a better fit. Applying them edits that project's README.
+
+Pages and the ideas on them are kept on the device. The backend only does the research and rating.
+
+### Choosing a model
+
+Every pipeline talks to its model through the same OpenAI-style API, which Ollama, Gemini and Groq all offer. Only the client and model name change, and the app sends the choice with each request.
+
+| Model | Good for | Watch out for |
+|---|---|---|
+| Qwen 2.5 7B (Ollama) | Free, private, works offline | Slower; weaker at Indian languages |
+| Gemini (`gemini-flash-lite-latest`) | Fast, good Indian languages | Free-tier quotas |
+| Groq (`openai/gpt-oss-120b`) | Very fast, reliable JSON | Free tier: 8,000 tokens a minute and 200,000 a day per model |
+
+When a cloud model hits its limit, Veya says so instead of failing silently. Switch models, or set `GROQ_MODEL` to another Groq model, which has its own daily allowance.
 
 ## Tech stack
 
 | Part | Built with |
 |---|---|
 | Mobile and web app | Expo SDK 58, React Native, Expo Router, TypeScript, Zustand |
-| Sign-in | Clerk (email and Google) |
+| Sign-in | Clerk (email and Google); the backend verifies Clerk's session tokens |
 | Voice | expo-audio, Gnani (Vachana) STT and TTS |
 | Backend | FastAPI, Pydantic, SQLite |
-| Language model | Qwen 2.5 (7B) running locally through Ollama |
+| Language model | Qwen 2.5 (7B) through Ollama, Google Gemini or Groq (your choice per conversation) |
+| Research | GitHub and Devpost search (Idea Check); Devpost, Unstop, Devfolio and DuckDuckGo (idea pages) |
 | Diagrams and images | Mermaid, Stable Diffusion (diffusers) |
 
 ## Project structure
@@ -74,7 +112,7 @@ The app never talks to the speech or model services directly. All keys stay on t
 ```
 veya/
 ├── src/
-│   ├── app/          screens (file-based routes)
+│   ├── app/          screens (file-based routes): Talk, Your Ideas, Innovator, Calendar, Settings
 │   ├── components/   UI building blocks
 │   ├── stores/       app state (conversation, chat, projects, …)
 │   ├── lib/          API client, audio, voice detection, helpers
@@ -83,9 +121,10 @@ veya/
 ├── docs/             demo video
 ├── veya-idea-engine/ research-driven idea discovery service (Innovator)
 └── gnani/            FastAPI backend
-    ├── services/     conversation, chat, language, perception, reasoning, speech, visuals, projects
+    ├── services/     conversation, chat, language, perception, reasoning, speech, visuals, projects,
+    │                 idea_check, idea_boards, project_edit, llm_providers
     ├── tools/        tools the reasoning layer can call
-    ├── webapp/       API routes
+    ├── webapp/       API routes and auth
     └── tests/
 ```
 
@@ -98,6 +137,7 @@ veya/
 - [ffmpeg](https://ffmpeg.org/) (converts recordings for speech-to-text)
 - [Ollama](https://ollama.com/) with the Qwen model: `ollama pull qwen2.5:7b`
 - A Gnani (Vachana) API key and a Clerk publishable key
+- Optional: a Gemini API key ([Google AI Studio](https://aistudio.google.com/)) and/or a Groq API key ([console.groq.com](https://console.groq.com/)) to use cloud models
 
 ### 1. Configure
 
@@ -123,6 +163,19 @@ EXPO_PUBLIC_VEYA_API_URL=http://localhost:8000
 | A phone on the same Wi-Fi | `http://<your computer's IP>:8000` |
 
 Only `EXPO_PUBLIC_*` values end up in the app. Everything else stays on the server.
+
+Cloud models and sign-in checks are set in the same file:
+
+```bash
+GEMINI_API_KEY=...        # turns Gemini on
+GROQ_API_KEY=gsk_...      # turns Groq on
+# GROQ_MODEL=openai/gpt-oss-120b   (optional; another model gets its own daily quota)
+
+# VEYA_AUTH=clerk         (default) every request needs a valid Clerk token
+# VEYA_AUTH=header        development only: trusts an X-Veya-User header
+```
+
+If you pick a model whose key isn't set, Veya tells you which setting to add. Qwen works whenever Ollama is running.
 
 ### 2. Run the backend
 
